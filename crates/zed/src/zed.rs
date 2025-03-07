@@ -237,6 +237,7 @@ pub fn initialize_workspace(
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let indent_size_selector = cx.new(|_cx| indent_size_selector::Indentation::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
@@ -246,6 +247,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
+            status_bar.add_right_item(indent_size_selector, window, cx);
         });
 
         let handle = cx.entity().downgrade();

@@ -303,12 +303,12 @@ impl FromStr for VersionTagList {
     }
 }
 
-pub struct CommitsFromVersionToHead {
+pub struct CommitsFromVersionToVersion {
     version_tag: VersionTag,
     branch: String,
 }
 
-impl CommitsFromVersionToHead {
+impl CommitsFromVersionToVersion {
     pub fn new(version_tag: VersionTag, branch: String) -> Self {
         Self {
             version_tag,
@@ -317,7 +317,7 @@ impl CommitsFromVersionToHead {
     }
 }
 
-impl Subcommand for CommitsFromVersionToHead {
+impl Subcommand for CommitsFromVersionToVersion {
     type ParsedOutput = CommitList;
 
     fn args(&self) -> impl IntoIterator<Item = String> {
@@ -340,32 +340,6 @@ impl FromStr for NoOutput {
 
     fn from_str(_: &str) -> Result<Self, Self::Err> {
         Ok(NoOutput)
-    }
-}
-
-pub struct FetchRefs {
-    branch: String,
-}
-
-impl FetchRefs {
-    pub fn new(branch: String) -> Self {
-        Self { branch }
-    }
-}
-
-impl Subcommand for FetchRefs {
-    type ParsedOutput = NoOutput;
-
-    fn args(&self) -> impl IntoIterator<Item = String> {
-        [
-            "fetch".to_string(),
-            "origin".to_string(),
-            "refs/tags/*:refs/tags/*".to_string(),
-            format!(
-                "refs/heads/{}:refs/remotes/origin/{}",
-                self.branch, self.branch
-            ),
-        ]
     }
 }
 

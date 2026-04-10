@@ -1,12 +1,15 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
-    AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AssistantMessageChunk, AuthRequired, LoadError, MaxOutputTokensError, MentionUri,
+    PermissionOptionChoice, PermissionOptions, PermissionPattern, RetryStatus,
+    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
-use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
+use agent::{
+    NativeAgentServer, NativeAgentSessionList, NoModelConfiguredError, SharedThread, ThreadStore,
+};
 use agent_client_protocol as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
@@ -34,7 +37,7 @@ use gpui::{
     list, point, pulsating_between,
 };
 use language::Buffer;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
@@ -78,7 +81,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::thread_metadata_store::ThreadMetadataStore;
+
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -113,6 +116,31 @@ pub(crate) enum ThreadError {
     PaymentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
+    RateLimitExceeded {
+        provider: SharedString,
+    },
+    ServerOverloaded {
+        provider: SharedString,
+    },
+    PromptTooLarge,
+    NoApiKey {
+        provider: SharedString,
+    },
+    StreamError {
+        provider: SharedString,
+    },
+    InvalidApiKey {
+        provider: SharedString,
+    },
+    PermissionDenied {
+        provider: SharedString,
+    },
+    RequestFailed,
+    MaxOutputTokens,
+    NoModelSelected,
+    ApiError {
+        provider: SharedString,
+    },
     Other {
         message: SharedString,
         acp_error_code: Option<SharedString>,
@@ -121,12 +149,57 @@ pub(crate) enum ThreadError {
 
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
-        if error.is::<language_model::PaymentRequiredError>() {
+        if error.is::<MaxOutputTokensError>() {
+            Self::MaxOutputTokens
+        } else if error.is::<NoModelConfiguredError>() {
+            Self::NoModelSelected
+        } else if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
+        } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
+            use LanguageModelCompletionError::*;
+            match lm_error {
+                RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
+                    provider: provider.to_string().into(),
+                },
+                ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
+                    Self::ServerOverloaded {
+                        provider: provider.to_string().into(),
+                    }
+                }
+                PromptTooLarge { .. } => Self::PromptTooLarge,
+                NoApiKey { provider } => Self::NoApiKey {
+                    provider: provider.to_string().into(),
+                },
+                StreamEndedUnexpectedly { provider }
+                | ApiReadResponseError { provider, .. }
+                | DeserializeResponse { provider, .. }
+                | HttpSend { provider, .. } => Self::StreamError {
+                    provider: provider.to_string().into(),
+                },
+                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                    provider: provider.to_string().into(),
+                },
+                PermissionError { provider, .. } => Self::PermissionDenied {
+                    provider: provider.to_string().into(),
+                },
+                UpstreamProviderError { .. } => Self::RequestFailed,
+                BadRequestFormat { provider, .. }
+                | HttpResponseError { provider, .. }
+                | ApiEndpointNotFound { provider } => Self::ApiError {
+                    provider: provider.to_string().into(),
+                },
+                _ => {
+                    let message: SharedString = format!("{:#}", error).into();
+                    Self::Other {
+                        message,
+                        acp_error_code: None,
+                    }
+                }
+            }
         } else {
             let message: SharedString = format!("{:#}", error).into();
 
@@ -352,6 +425,20 @@ impl ConversationView {
             .conversation
             .read(cx)
             .pending_tool_call(id, cx)
+    }
+
+    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+        let Some(root_thread) = self.root_thread(cx) else {
+            return false;
+        };
+        let root_id = root_thread.read(cx).id.clone();
+        self.as_connected().is_some_and(|connected| {
+            connected
+                .conversation
+                .read(cx)
+                .pending_tool_call(&root_id, cx)
+                .is_some()
+        })
     }
 
     pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -1510,24 +1597,30 @@ impl ConversationView {
 
         let agent_telemetry_id = connection.telemetry_id();
 
-        if let Some(login) = connection.terminal_auth_task(&method, cx) {
+        if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
             configuration_view.take();
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
-            let authenticate = Self::spawn_external_agent_login(
-                login,
-                workspace,
-                project,
-                method.clone(),
-                false,
-                window,
-                cx,
-            );
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
-                    let result = authenticate.await;
+                    let result = async {
+                        let login = login_task.await?;
+                        this.update_in(cx, |_this, window, cx| {
+                            Self::spawn_external_agent_login(
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    }
+                    .await;
 
                     match &result {
                         Ok(_) => telemetry::event!(
@@ -2628,22 +2721,6 @@ impl ConversationView {
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         self.as_connected().and_then(|c| c.history.as_ref())
     }
-
-    pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        let Some(connected) = self.as_connected() else {
-            return;
-        };
-
-        let Some(history) = &connected.history else {
-            return;
-        };
-        let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
-        task.detach_and_log_err(cx);
-
-        if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
-        }
-    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2813,6 +2890,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
 
@@ -6620,19 +6698,11 @@ pub(crate) mod tests {
         conversation_view.read_with(cx, |conversation_view, cx| {
             let state = conversation_view.active_thread().unwrap();
             let error = &state.read(cx).thread_error;
-            match error {
-                Some(ThreadError::Other { message, .. }) => {
-                    assert!(
-                        message.contains("Maximum tokens reached"),
-                        "Expected 'Maximum tokens reached' error, got: {}",
-                        message
-                    );
-                }
-                other => panic!(
-                    "Expected ThreadError::Other with 'Maximum tokens reached', got: {:?}",
-                    other.is_some()
-                ),
-            }
+            assert!(
+                matches!(error, Some(ThreadError::MaxOutputTokens)),
+                "Expected ThreadError::MaxOutputTokens, got: {:?}",
+                error.is_some()
+            );
         });
     }
 

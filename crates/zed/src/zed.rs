@@ -103,7 +103,9 @@ use workspace::{
     WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
-use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
+use workspace::{
+    CloseProject, CloseWindow, NewCenterTerminal, RestoreBanner, with_active_or_new_workspace,
+};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
@@ -1341,7 +1343,12 @@ fn register_actions(
                     cx,
                     |workspace, window, cx| {
                         cx.activate(true);
-                        initialize_new_window(workspace, window, cx);
+                        terminal_view::TerminalView::deploy(
+                            workspace,
+                            &NewCenterTerminal::default(),
+                            window,
+                            cx,
+                        );
                     },
                 )
                 .detach();

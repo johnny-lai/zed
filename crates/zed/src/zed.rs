@@ -92,7 +92,8 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
-    CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, NewCenterTerminal, RestoreBanner,
+    with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -1049,20 +1050,11 @@ fn register_actions(
                     cx,
                     |workspace, window, cx| {
                         cx.activate(true);
-                        // Create buffer synchronously to avoid flicker
-                        let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer("", None, true, cx)
-                        });
-                        let editor = cx.new(|cx| {
-                            Editor::for_buffer(buffer, Some(project), window, cx)
-                        });
-                        workspace.add_item_to_active_pane(
-                            Box::new(editor),
-                            None,
-                            true,
+                        terminal_view::TerminalView::deploy(
+                            workspace,
+                            &NewCenterTerminal::default(),
                             window,
-                            cx,
+                            cx
                         );
                     },
                 )

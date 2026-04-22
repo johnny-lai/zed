@@ -15,7 +15,6 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
 use db::kvp::{GlobalKeyValueStore, KeyValueStore};
-use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
@@ -51,13 +50,15 @@ use std::{
     sync::{Arc, LazyLock, OnceLock},
     time::Instant,
 };
+use terminal_view::TerminalView;
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
+    AppState, MultiWorkspace, NewCenterTerminal, SerializedWorkspaceLocation, SessionWorkspace,
+    Toast, WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
+    restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -1457,7 +1458,12 @@ pub(crate) async fn restore_or_create_workspace(
                     match restore_on_startup {
                         workspace::RestoreOnStartupBehavior::Launchpad => {}
                         _ => {
-                            Editor::new_file(workspace, &Default::default(), window, cx);
+                            TerminalView::deploy(
+                                workspace,
+                                &NewCenterTerminal::default(),
+                                window,
+                                cx,
+                            );
                         }
                     }
                 },

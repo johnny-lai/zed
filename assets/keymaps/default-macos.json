@@ -742,7 +742,8 @@
     "context": "Workspace && !Terminal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "workspace::NewFile",
+      "cmd-n": "workspace::NewWindow",
+      "cmd-t": "workspace::NewCenterTerminal",
       "cmd-shift-r": "task::Spawn",
       // All task parameters are captured and unchanged between reruns by default.
       // Use the `"reevaluate_context"` parameter to control this.

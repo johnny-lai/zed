@@ -94,20 +94,20 @@ linux() {
     appid=""
     case "$channel" in
       stable)
-        appid="dev.zed.Zed"
+        appid="dev.zed.Zetty"
         ;;
       nightly)
-        appid="dev.zed.Zed-Nightly"
+        appid="dev.zed.Zetty-Nightly"
         ;;
       preview)
-        appid="dev.zed.Zed-Preview"
+        appid="dev.zed.Zetty-Preview"
         ;;
       dev)
-        appid="dev.zed.Zed-Dev"
+        appid="dev.zed.Zetty-Dev"
         ;;
       *)
         echo "Unknown release channel: ${channel}. Using stable app ID."
-        appid="dev.zed.Zed"
+        appid="dev.zed.Zetty"
         ;;
     esac
 

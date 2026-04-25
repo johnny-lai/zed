@@ -28,10 +28,10 @@ fn address() -> SocketAddr {
     // respectively. User 502 will use ports 44339, 44439, and 44539 for the preview,
     // stable, and nightly channels, respectively.
     let port = match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev => 43737,
-        ReleaseChannel::Preview => 43737 + USER_BLOCK,
-        ReleaseChannel::Stable => 43737 + (2 * USER_BLOCK),
-        ReleaseChannel::Nightly => 43737 + (3 * USER_BLOCK),
+        ReleaseChannel::Dev => 42727,
+        ReleaseChannel::Preview => 42727 + USER_BLOCK,
+        ReleaseChannel::Stable => 42727 + (2 * USER_BLOCK),
+        ReleaseChannel::Nightly => 42727 + (3 * USER_BLOCK),
     };
     let uid = getuid().as_raw();
     // Ensure that the user ID is not too large to avoid overflow when
@@ -46,10 +46,10 @@ fn address() -> SocketAddr {
 
 fn instance_handshake() -> &'static str {
     match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev => "Zed Editor Dev Instance Running",
-        ReleaseChannel::Nightly => "Zed Editor Nightly Instance Running",
-        ReleaseChannel::Preview => "Zed Editor Preview Instance Running",
-        ReleaseChannel::Stable => "Zed Editor Stable Instance Running",
+        ReleaseChannel::Dev => "Zetty Dev Instance Running",
+        ReleaseChannel::Nightly => "Zetty Nightly Instance Running",
+        ReleaseChannel::Preview => "Zetty Preview Instance Running",
+        ReleaseChannel::Stable => "Zetty Stable Instance Running",
     }
 }
 

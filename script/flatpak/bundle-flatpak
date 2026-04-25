@@ -30,7 +30,7 @@ elif [[ "$channel" == "preview" ]]; then
     export BRANDING_DARK="#1a5fb4"
     export ICON_FILE="app-icon-preview"
 elif [[ "$channel" == "stable" ]]; then
-    export APP_ID="dev.zed.Zed"
+    export APP_ID="dev.zed.Zetty"
     export APP_NAME="Zed"
     export BRANDING_LIGHT="#99c1f1"
     export BRANDING_DARK="#1a5fb4"

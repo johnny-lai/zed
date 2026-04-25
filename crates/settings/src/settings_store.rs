@@ -43,7 +43,7 @@ use crate::{
 
 use settings_json::{infer_json_indent_size, update_value_in_json_text};
 
-pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
+pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zetty://schemas/settings/lsp/";
 
 // GPUI resolves these aliases, but they are not part of the platform font inventory.
 const VIRTUAL_FONT_NAMES: [&str; 5] = [
@@ -3309,7 +3309,7 @@ mod tests {
 
         assert_eq!(
             init_options_ref,
-            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+            "zetty://schemas/settings/lsp/rust-analyzer/initialization_options"
         );
 
         let settings_ref = properties
@@ -3322,7 +3322,7 @@ mod tests {
 
         assert_eq!(
             settings_ref,
-            "zed://schemas/settings/lsp/rust-analyzer/settings"
+            "zetty://schemas/settings/lsp/rust-analyzer/settings"
         );
     }
 
@@ -3364,7 +3364,7 @@ mod tests {
 
         assert_eq!(
             init_options_ref,
-            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+            "zetty://schemas/settings/lsp/rust-analyzer/initialization_options"
         );
 
         let settings_ref = properties
@@ -3377,7 +3377,7 @@ mod tests {
 
         assert_eq!(
             settings_ref,
-            "zed://schemas/settings/lsp/rust-analyzer/settings"
+            "zetty://schemas/settings/lsp/rust-analyzer/settings"
         );
     }
 

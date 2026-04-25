@@ -308,7 +308,7 @@ pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<S
 }
 
 /// Returns a path for the zed cli executable, this function
-/// should be called from the zed executable, not zed-cli.
+/// should be called from the zed executable, not zetty-cli.
 pub fn get_zed_cli_path() -> Result<PathBuf> {
     use anyhow::Context as _;
     let zed_path =
@@ -318,7 +318,7 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
         .context("Failed to determine parent directory of zed executable path.")?;
 
     let possible_locations: &[&str] = if cfg!(target_os = "macos") {
-        // On macOS, the zed executable and zed-cli are inside the app bundle,
+        // On macOS, the zed executable and zetty-cli are inside the app bundle,
         // so here ./cli is for both installed and development builds.
         &["./cli"]
     } else if cfg!(target_os = "windows") {
@@ -328,7 +328,7 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
         // bin is the standard, ./cli is for the target directory in development builds.
         &["../bin/zed", "./cli"]
     } else {
-        anyhow::bail!("unsupported platform for determining zed-cli path");
+        anyhow::bail!("unsupported platform for determining zetty-cli path");
     };
 
     possible_locations
@@ -342,7 +342,7 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
         })
         .with_context(|| {
             format!(
-                "could not find zed-cli from any of: {}",
+                "could not find zetty-cli from any of: {}",
                 possible_locations.join(", ")
             )
         })

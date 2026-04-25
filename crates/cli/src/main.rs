@@ -27,7 +27,7 @@ use walkdir::WalkDir;
 
 use std::io::IsTerminal;
 
-const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
+const URL_PREFIX: [&'static str; 5] = ["zetty://", "http://", "https://", "file://", "ssh://"];
 
 struct Detect;
 
@@ -44,21 +44,21 @@ trait InstalledApp {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "zed",
+    name = "zetty",
     disable_version_flag = true,
-    before_help = "The Zed CLI binary.
-This CLI is a separate binary that invokes Zed.
+    before_help = "The Zetty CLI binary.
+This CLI is a separate binary that invokes Zetty.
 
 Examples:
-    `zed`
+    `zetty`
           Simply opens Zed
-    `zed --foreground`
+    `zetty --foreground`
           Runs in foreground (shows all logs)
-    `zed path-to-your-project`
+    `zetty path-to-your-project`
           Open your project in Zed
-    `zed -n path-to-file `
+    `zetty -n path-to-file `
           Open file/folder in a new window",
-    after_help = "To read from stdin, append '-', e.g. 'ps axf | zed -'"
+    after_help = "To read from stdin, append '-', e.g. 'ps axf | zetty -'"
 )]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
@@ -539,7 +539,7 @@ fn main() -> Result<()> {
 
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
-    let url = format!("zed-cli://{server_name}");
+    let url = format!("zetty-cli://{server_name}");
 
     let open_behavior = if args.new {
         cli::OpenBehavior::AlwaysNew
@@ -1040,7 +1040,7 @@ mod flatpak {
 
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
+            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zetty"))
             && args.zed.is_none()
         {
             args.zed = Some("/app/libexec/zed-editor".into());
@@ -1055,7 +1055,7 @@ mod flatpak {
         }
 
         if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
-            if !flatpak_id.starts_with("dev.zed.Zed") {
+            if !flatpak_id.starts_with("dev.zed.Zetty") {
                 return None;
             }
 
@@ -1315,7 +1315,7 @@ mod mac_os {
                             kCFStringEncodingUTF8,
                             ptr::null(),
                         ));
-                        // equivalent to: open zed-cli:... -a /Applications/Zed\ Preview.app
+                        // equivalent to: open zetty-cli:... -a /Applications/Zed\ Preview.app
                         let urls_to_open =
                             CFArray::from_copyable(&[url_to_open.as_concrete_TypeRef()]);
                         LSOpenFromURLSpec(
@@ -1374,7 +1374,7 @@ mod mac_os {
             user_data_dir: Option<&str>,
         ) -> io::Result<ExitStatus> {
             let path = match self {
-                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zetty"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             };
 
@@ -1388,7 +1388,7 @@ mod mac_os {
 
         fn path(&self) -> PathBuf {
             match self {
-                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zetty"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             }
         }

@@ -174,16 +174,16 @@ export APP_ICON="zed"
 export APP_ARGS="%U"
 if [[ "$channel" == "preview" ]]; then
   export APP_NAME="Zed Preview"
-  APP_ID="dev.zed.Zed-Preview"
+  APP_ID="dev.zed.Zetty-Preview"
 elif [[ "$channel" == "nightly" ]]; then
   export APP_NAME="Zed Nightly"
-  APP_ID="dev.zed.Zed-Nightly"
+  APP_ID="dev.zed.Zetty-Nightly"
 elif [[ "$channel" == "dev" ]]; then
   export APP_NAME="Zed Devel"
-  APP_ID="dev.zed.Zed-Dev"
+  APP_ID="dev.zed.Zetty-Dev"
 else
   export APP_NAME="Zed"
-  APP_ID="dev.zed.Zed"
+  APP_ID="dev.zed.Zetty"
 fi
 
 mkdir -p "${zed_dir}/share/applications"

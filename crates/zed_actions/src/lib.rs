@@ -19,7 +19,7 @@ pub struct OpenBrowser {
     pub url: String,
 }
 
-/// Opens a zed:// URL within the application.
+/// Opens a zetty:// URL within the application.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]

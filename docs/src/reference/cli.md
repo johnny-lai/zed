@@ -154,10 +154,10 @@ This creates a temporary file with the stdin content and opens it in Zed.
 
 ## URL Handling
 
-The CLI can open `zed://`, `http://`, and `https://` URLs:
+The CLI can open `zetty://`, `http://`, and `https://` URLs:
 
 ```sh
-zed zed://settings
+zed zetty://settings
 zed https://github.com/zed-industries/zed
 ```
 

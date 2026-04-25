@@ -372,7 +372,7 @@ pub(crate) fn run_ts_query_ls() -> Step<Run> {
         "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
-            echo "zed://extension/tree-sitter-query"
+            echo "zetty://extension/tree-sitter-query"
             false
         }}"#
     ))

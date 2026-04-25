@@ -1700,6 +1700,10 @@ impl Item for TerminalView {
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
+
+    fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.terminal().read(cx).working_directory()
+    }
 }
 
 impl SerializableItem for TerminalView {

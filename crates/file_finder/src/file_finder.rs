@@ -137,6 +137,16 @@ impl FileFinder {
             Some(FoundPath::new(project_path, abs_path))
         });
 
+        // When no worktrees exist, seed one from the active item's context directory
+        // (e.g. a terminal's CWD) so both the file finder and project panel have a root.
+        let worktree_hint = if project.visible_worktrees(cx).next().is_none() {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.workspace_path_hint(cx))
+        } else {
+            None
+        };
+
         let history_items = workspace
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
@@ -160,6 +170,16 @@ impl FileFinder {
             })
             .collect::<Vec<_>>();
         cx.spawn_in(window, async move |workspace, cx| {
+            if let Some(path) = worktree_hint {
+                if let Ok(task) = workspace.update_in(cx, |workspace, _window, cx| {
+                    workspace.project().update(cx, |project, cx| {
+                        project.find_or_create_worktree(&path, true, cx)
+                    })
+                }) {
+                    task.await.log_err();
+                }
+            }
+
             let history_items = join_all(history_items).await.into_iter().flatten();
 
             workspace

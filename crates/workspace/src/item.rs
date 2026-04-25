@@ -379,6 +379,13 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ) -> Vec<(SharedString, Box<dyn Action>)> {
         Vec::new()
     }
+
+    /// Returns a filesystem path that represents the item's current context directory.
+    /// Used to seed a worktree when no project is open (e.g. opening the file finder
+    /// from a terminal whose CWD is not yet part of any worktree).
+    fn workspace_path_hint(&self, _cx: &App) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -561,6 +568,7 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)>;
+    fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -1157,6 +1165,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.tab_extra_context_menu_actions(window, cx)
         })
+    }
+
+    fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.read(cx).workspace_path_hint(cx)
     }
 }
 

@@ -69,7 +69,7 @@ rm -rf ~/.config/zed
 rm -rf ~/Library/Application\ Support/Zed
 rm -rf ~/Library/Caches/Zed
 rm -rf ~/Library/Logs/Zed
-rm -rf ~/Library/Saved\ Application\ State/dev.zed.Zed.savedState
+rm -rf ~/Library/Saved\ Application\ State/dev.zed.Zetty.savedState
 ```
 
 If you installed the CLI, remove it with:

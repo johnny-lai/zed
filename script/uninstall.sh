@@ -58,24 +58,24 @@ linux() {
     db_suffix="stable"
     case "$channel" in
       stable)
-        appid="dev.zed.Zed"
+        appid="dev.zed.Zetty"
         db_suffix="stable"
         ;;
       nightly)
-        appid="dev.zed.Zed-Nightly"
+        appid="dev.zed.Zetty-Nightly"
         db_suffix="nightly"
         ;;
       preview)
-        appid="dev.zed.Zed-Preview"
+        appid="dev.zed.Zetty-Preview"
         db_suffix="preview"
         ;;
       dev)
-        appid="dev.zed.Zed-Dev"
+        appid="dev.zed.Zetty-Dev"
         db_suffix="dev"
         ;;
       *)
         echo "Unknown release channel: ${channel}. Using stable app ID."
-        appid="dev.zed.Zed"
+        appid="dev.zed.Zetty"
         db_suffix="stable"
         ;;
     esac
@@ -107,22 +107,22 @@ linux() {
 macos() {
     app="Zed.app"
     db_suffix="stable"
-    app_id="dev.zed.Zed"
+    app_id="dev.zed.Zetty"
     case "$channel" in
       nightly)
         app="Zed Nightly.app"
         db_suffix="nightly"
-        app_id="dev.zed.Zed-Nightly"
+        app_id="dev.zed.Zetty-Nightly"
         ;;
       preview)
         app="Zed Preview.app"
         db_suffix="preview"
-        app_id="dev.zed.Zed-Preview"
+        app_id="dev.zed.Zetty-Preview"
         ;;
       dev)
         app="Zed Dev.app"
         db_suffix="dev"
-        app_id="dev.zed.Zed-Dev"
+        app_id="dev.zed.Zetty-Dev"
         ;;
     esac
 

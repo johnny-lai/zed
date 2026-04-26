@@ -33,7 +33,6 @@ do
         o) open_result=true;;
         d)
             export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
             target_dir="debug"
             ;;
@@ -88,8 +87,6 @@ rustup target add $target_triple
 
 echo "Compiling zed binaries"
 cargo build ${build_flag} --package zed --package cli --target $target_triple
-# Build visual test runner with required features so cargo bundle can copy it
-cargo build ${build_flag} --package zed --features zed/visual-tests --bin zed_visual_test_runner --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo build ${build_flag} --package remote_server --target $target_triple

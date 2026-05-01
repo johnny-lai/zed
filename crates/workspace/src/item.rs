@@ -380,6 +380,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         Vec::new()
     }
 
+    /// Whether the file finder should default to the secondary action (e.g. open in split)
+    /// when confirmed from this item.
+    fn prefers_secondary(&self, _cx: &App) -> bool {
+        false
+    }
+
     /// Returns a filesystem path that represents the item's current context directory.
     /// Used to seed a worktree when no project is open (e.g. opening the file finder
     /// from a terminal whose CWD is not yet part of any worktree).
@@ -568,6 +574,7 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)>;
+    fn prefers_secondary(&self, cx: &App) -> bool;
     fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
@@ -1165,6 +1172,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.tab_extra_context_menu_actions(window, cx)
         })
+    }
+
+    fn prefers_secondary(&self, cx: &App) -> bool {
+        self.read(cx).prefers_secondary(cx)
     }
 
     fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf> {

@@ -1701,6 +1701,10 @@ impl Item for TerminalView {
         f(*event)
     }
 
+    fn prefers_secondary(&self, _cx: &App) -> bool {
+        true
+    }
+
     fn workspace_path_hint(&self, cx: &App) -> Option<std::path::PathBuf> {
         self.terminal().read(cx).working_directory()
     }

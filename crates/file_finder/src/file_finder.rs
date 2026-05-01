@@ -128,7 +128,8 @@ impl FileFinder {
         let project = workspace.project().read(cx);
         let fs = project.fs();
 
-        let currently_opened_path = workspace.active_item(cx).and_then(|item| {
+        let active_item = workspace.active_item(cx);
+        let currently_opened_path = active_item.as_ref().and_then(|item| {
             let project_path = item.project_path(cx)?;
             let abs_path = project
                 .worktree_for_id(project_path.worktree_id, cx)?
@@ -136,6 +137,9 @@ impl FileFinder {
                 .absolutize(&project_path.path);
             Some(FoundPath::new(project_path, abs_path))
         });
+        let prefers_secondary = active_item
+            .as_ref()
+            .map_or(false, |item| item.prefers_secondary(cx));
 
         // When no worktrees exist, seed one from the active item's context directory
         // (e.g. a terminal's CWD) so both the file finder and project panel have a root.
@@ -194,6 +198,7 @@ impl FileFinder {
                             currently_opened_path,
                             history_items.collect(),
                             separate_history,
+                            prefers_secondary,
                             window,
                             cx,
                         );
@@ -433,6 +438,7 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    prefers_secondary: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -842,6 +848,7 @@ impl FileFinderDelegate {
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         separate_history: bool,
+        prefers_secondary: bool,
         window: &mut Window,
         cx: &mut Context<FileFinder>,
     ) -> Self {
@@ -873,6 +880,7 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: FileFinderSettings::get_global(cx).include_ignored,
             include_ignored_refresh: Task::ready(()),
+            prefers_secondary,
         }
     }
 
@@ -1555,6 +1563,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
+        let secondary = secondary ^ self.prefers_secondary;
         if let Some(m) = self.matches.get(self.selected_index())
             && let Some(workspace) = self.workspace.upgrade()
         {

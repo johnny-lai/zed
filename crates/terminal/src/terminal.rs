@@ -624,6 +624,10 @@ actions!(
         ToggleViMode,
         /// Selects all text in the terminal.
         SelectAll,
+        ///
+        AddWorktree,
+        ///
+        RemoveWorktree,
     ]
 );
 

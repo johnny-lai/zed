@@ -33,10 +33,10 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, MouseInputMode, Paste,
-    PasteText, Point, Range, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp,
-    ScrollToBottom, ScrollToTop, Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal,
-    TerminalBounds, ToggleViMode,
+    AddWorktree, Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, MouseInputMode,
+    Paste, PasteText, Point, Range, RemoveWorktree, ScrollLineDown, ScrollLineUp, ScrollPageDown,
+    ScrollPageUp, ScrollToBottom, ScrollToTop, Search, ShowCharacterPalette, TaskState, TaskStatus,
+    Terminal, TerminalBounds, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -1193,6 +1193,39 @@ impl TerminalView {
                 }),
         )
     }
+
+    pub fn add_worktree(&mut self, _: &AddWorktree, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(path) = self.workspace_path_hint(cx) else {
+            return;
+        };
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(&path, true, cx)
+            })
+            .detach_and_log_err(cx);
+    }
+
+    pub fn remove_worktree(
+        &mut self,
+        _: &RemoveWorktree,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(path) = self.workspace_path_hint(cx) else {
+            return;
+        };
+
+        project.update(cx, |project, cx| {
+            project.remove_worktree_for_main_worktree_path(&path, cx);
+        });
+    }
 }
 
 fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
@@ -1490,6 +1523,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
             .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::add_worktree))
+            .on_action(cx.listener(TerminalView::remove_worktree))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,

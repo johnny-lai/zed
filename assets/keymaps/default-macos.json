@@ -1364,6 +1364,8 @@
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask",
       "cmd->": "agent::AddSelectionToThread",
+      "cmd-+": "terminal::AddWorktree",
+      "cmd-_": "terminal::RemoveWorktree",
     },
   },
   {

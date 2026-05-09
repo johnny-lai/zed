@@ -126,13 +126,9 @@ impl FileFinder {
 
         // When no worktrees exist, seed one from the active item's context directory
         // (e.g. a terminal's CWD) so both the file finder and project panel have a root.
-        let worktree_hint = if project.visible_worktrees(cx).next().is_none() {
-            workspace
-                .active_item(cx)
-                .and_then(|item| item.workspace_path_hint(cx))
-        } else {
-            None
-        };
+        let worktree_hint = workspace
+            .active_item(cx)
+            .and_then(|item| item.workspace_path_hint(cx));
 
         let history_items = workspace
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)

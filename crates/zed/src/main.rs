@@ -1540,7 +1540,7 @@ pub(crate) async fn restore_or_create_workspace(
                         match restore_on_startup {
                             workspace::RestoreOnStartupBehavior::Launchpad => {}
                             _ => {
-                                Editor::new_file(workspace, &Default::default(), window, cx);
+                                editor::Editor::new_file(workspace, &Default::default(), window, cx);
                             }
                         }
                     },

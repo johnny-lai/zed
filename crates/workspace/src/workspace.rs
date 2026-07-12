@@ -3,6 +3,7 @@ pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
+pub mod layout;
 mod modal_layer;
 mod multi_workspace;
 #[cfg(test)]
@@ -81,6 +82,7 @@ use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
 };
+pub use layout::*;
 pub use pane::*;
 pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
@@ -1453,6 +1455,7 @@ pub struct Workspace {
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
     right_dock: Entity<Dock>,
+    layout: layout::Layout,
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
@@ -1921,6 +1924,7 @@ impl Workspace {
             maximized_pane: None,
             previous_dock_drag_coordinates: None,
             center,
+            layout: layout::Layout::TwoColumn,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
@@ -4871,14 +4875,8 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let reveal_if_open = pane.is_none() && WorkspaceSettings::get_global(cx).reveal_if_open;
-        let requested_pane = pane.unwrap_or_else(|| {
-            self.last_active_center_pane.clone().unwrap_or_else(|| {
-                self.panes
-                    .first()
-                    .expect("There must be an active pane")
-                    .downgrade()
-            })
-        });
+        let requested_pane =
+            pane.unwrap_or_else(|| self.pane_for_layout_role(LayoutRole::Editor).downgrade());
 
         let workspace = self.weak_self.clone();
         let project_path = path.into();
@@ -5903,13 +5901,16 @@ impl Workspace {
             pane::Event::Split { direction, mode } => {
                 match mode {
                     SplitMode::ClonePane => {
+                        log::info!("handle_pane_event: split -> clone **");
                         self.split_and_clone(pane.clone(), *direction, window, cx)
                             .detach();
                     }
                     SplitMode::EmptyPane => {
+                        log::info!("handle_pane_event: split -> empty");
                         self.split_pane(pane.clone(), *direction, window, cx);
                     }
                     SplitMode::MovePane => {
+                        log::info!("handle_pane_event: split -> move");
                         self.split_and_move(pane.clone(), *direction, window, cx);
                     }
                 };
@@ -6195,6 +6196,24 @@ impl Workspace {
             .iter()
             .find(|pane| pane.entity_id() == entity_id)
             .cloned()
+    }
+
+    pub fn set_layout(&mut self, layout: layout::Layout) {
+        self.layout = layout
+    }
+
+    pub fn pane_for_layout_role(&self, role: layout::LayoutRole) -> Entity<Pane> {
+        let pane = match self.layout {
+            Layout::TwoColumn => {
+                let column = match role {
+                    LayoutRole::Terminal => 0,
+                    LayoutRole::AltTerminal | LayoutRole::Editor | LayoutRole::AltEditor => 1,
+                };
+                self.center.panes().get(column).map(|pane| (*pane).clone())
+            }
+            _ => None,
+        };
+        pane.unwrap_or(self.active_pane.clone())
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {

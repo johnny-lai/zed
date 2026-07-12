@@ -28,7 +28,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
-    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
+    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, LayoutRole, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
@@ -779,7 +779,8 @@ impl TerminalPanel {
                         cx,
                     )
                 });
-                workspace.add_item_to_active_pane(Box::new(terminal_view), None, true, window, cx);
+                let pane = workspace.pane_for_layout_role(LayoutRole::Terminal);
+                workspace.add_item(pane, Box::new(terminal_view), None, false, true, window, cx);
             })?;
             Ok(terminal.downgrade())
         })

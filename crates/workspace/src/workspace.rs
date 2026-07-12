@@ -4661,14 +4661,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        let pane = pane.unwrap_or_else(|| {
-            self.last_active_center_pane.clone().unwrap_or_else(|| {
-                self.panes
-                    .first()
-                    .expect("There must be an active pane")
-                    .downgrade()
-            })
-        });
+        let pane =
+            pane.unwrap_or_else(|| self.pane_for_layout_role(LayoutRole::Editor).downgrade());
 
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);

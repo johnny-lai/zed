@@ -28,7 +28,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt, defer};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
-    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
+    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, LayoutRole, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
@@ -866,9 +866,12 @@ impl TerminalPanel {
                 // a background terminal can finish starting up after the user has
                 // moved on, and focusing it would dismiss whatever they opened.
                 let focus_item = !workspace.has_active_modal(window, cx);
-                workspace.add_item_to_active_pane(
+                let pane = workspace.pane_for_layout_role(LayoutRole::Terminal);
+                workspace.add_item(
+                    pane,
                     Box::new(terminal_view),
                     None,
+                    false,
                     focus_item,
                     window,
                     cx,

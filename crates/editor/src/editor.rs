@@ -3075,6 +3075,7 @@ impl Editor {
                 buffer.set_content_language_detection_enabled(true);
             });
             workspace.update_in(cx, move |workspace, window, cx| {
+                // TODO:
                 workspace.split_item(
                     direction,
                     Box::new(

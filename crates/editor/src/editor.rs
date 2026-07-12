@@ -2816,6 +2816,7 @@ impl Editor {
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
             workspace.update_in(cx, move |workspace, window, cx| {
+                // TODO:
                 workspace.split_item(
                     direction,
                     Box::new(

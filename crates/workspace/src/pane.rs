@@ -4320,13 +4320,15 @@ impl Render for Pane {
                 pane.split(SplitDirection::Up, split.mode, window, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitHorizontal, window, cx| {
+                log::info!("pane: split horizontal");
                 pane.split(SplitDirection::horizontal(cx), split.mode, window, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitVertical, window, cx| {
                 pane.split(SplitDirection::vertical(cx), split.mode, window, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitRight, window, cx| {
-                pane.split(SplitDirection::Right, split.mode, window, cx)
+                log::info!("pane: split right **");
+                pane.split(SplitDirection::Right, SplitMode::EmptyPane, window, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitDown, window, cx| {
                 pane.split(SplitDirection::Down, split.mode, window, cx)

@@ -866,7 +866,7 @@ impl TerminalPanel {
                 // a background terminal can finish starting up after the user has
                 // moved on, and focusing it would dismiss whatever they opened.
                 let focus_item = !workspace.has_active_modal(window, cx);
-                let pane = workspace.pane_for_layout_role(LayoutRole::Terminal);
+                let pane = workspace.pane_for_layout_role(LayoutRole::Terminal, window, cx);
                 workspace.add_item(
                     pane,
                     Box::new(terminal_view),

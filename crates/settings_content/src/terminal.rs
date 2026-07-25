@@ -259,6 +259,10 @@ pub enum WorkingDirectory {
     /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
+    /// Use the working directory of the currently active terminal.
+    /// Fallback to the current project directory strategy if there is no
+    /// active terminal, or its working directory cannot be determined.
+    CurrentTerminalDirectory,
     /// Use the first project in this workspace's directory. Fallback to using
     /// this platform's home directory.
     FirstProjectDirectory,

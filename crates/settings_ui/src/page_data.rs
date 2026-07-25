@@ -7508,6 +7508,9 @@ fn terminal_page() -> SettingsPage {
                                     settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
                                         settings::WorkingDirectory::CurrentProjectDirectory
                                     }
+                                    settings::WorkingDirectoryDiscriminants::CurrentTerminalDirectory => {
+                                        settings::WorkingDirectory::CurrentTerminalDirectory
+                                    }
                                     settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => {
                                         settings::WorkingDirectory::FirstProjectDirectory
                                     }
@@ -7542,6 +7545,7 @@ fn terminal_page() -> SettingsPage {
                         .map(|variant| match variant {
                             settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
+                            settings::WorkingDirectoryDiscriminants::CurrentTerminalDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
                             settings::WorkingDirectoryDiscriminants::Always => vec![SettingItem {

@@ -2311,6 +2311,15 @@ pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<Path
             .active_entry_directory(cx)
             .or_else(|| current_project_directory(workspace, cx)),
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
+        WorkingDirectory::CurrentTerminalDirectory => workspace
+            .active_pane()
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<TerminalView>())
+            .and_then(|terminal_view| {
+                terminal_view.read(cx).terminal().read(cx).working_directory()
+            })
+            .or_else(|| current_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
@@ -2917,6 +2926,57 @@ mod tests {
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some(Path::new("/root1/").to_path_buf()));
         });
+    }
+
+    // current_terminal_directory: no active terminal -> falls back to current_project_directory
+    #[gpui::test]
+    async fn current_terminal_directory_no_active_terminal(cx: &mut TestAppContext) {
+        let (project, workspace) = init_test(cx).await;
+
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().project.working_directory =
+                        Some(WorkingDirectory::CurrentTerminalDirectory);
+                });
+            });
+
+            let workspace = workspace.read(cx);
+            let res = default_working_directory(workspace, cx);
+            assert_eq!(res, Some(Path::new("/root/").to_path_buf()));
+        });
+    }
+
+    // current_terminal_directory: active terminal has no known cwd (display-only) -> falls back
+    // to current_project_directory
+    #[gpui::test]
+    async fn current_terminal_directory_active_terminal_without_known_cwd(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().project.working_directory =
+                        Some(WorkingDirectory::CurrentTerminalDirectory);
+                });
+            });
+        });
+
+        create_folder_wt(project.clone(), "/root/", cx).await;
+        let (_pane, _terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        window_handle
+            .update(cx, |multi_workspace, _window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                let res = default_working_directory(workspace, cx);
+                assert_eq!(res, Some(Path::new("/root/").to_path_buf()));
+            })
+            .unwrap();
     }
 
     // active_entry_directory: No active entry -> returns None (used by CurrentFileDirectory)

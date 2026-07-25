@@ -703,7 +703,7 @@
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
       "cmd-ctrl-b": "branches::OpenRecent",
       "cmd-ctrl-w": "git::Worktree",
-      "ctrl-~": "workspace::NewTerminal",
+      "cmd-t": "workspace::NewCenterTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "alt-shift-enter": "toast::RunAction",
@@ -741,7 +741,7 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-shift-t": "theme::ToggleMode",
       "ctrl-alt-cmd-p": "settings_profile_selector::Toggle",
-      "cmd-t": "project_symbols::Toggle",
+      "cmd-shift-o": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-tab": "tab_switcher::Toggle",
@@ -774,7 +774,7 @@
     "context": "Workspace && !Terminal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "workspace::NewWindow",
+      "cmd-n": "workspace::NewFile",
       "cmd-t": "workspace::NewCenterTerminal",
       "cmd-shift-r": "task::Spawn",
       // All task parameters are captured and unchanged between reruns by default.
@@ -1318,7 +1318,6 @@
       "cmd-f": "buffer_search::Deploy",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
-      "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences

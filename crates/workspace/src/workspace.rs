@@ -4875,14 +4875,21 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let reveal_if_open = pane.is_none() && WorkspaceSettings::get_global(cx).reveal_if_open;
-        let requested_pane =
-            pane.unwrap_or_else(|| self.pane_for_layout_role(LayoutRole::Editor).downgrade());
-
-        let workspace = self.weak_self.clone();
+        let workspace = self.weak_handle();
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
+
+            let requested_pane = match pane {
+                Some(pane) => pane,
+                None => workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.pane_for_layout_role(LayoutRole::Editor, window, cx)
+                    })?
+                    .downgrade(),
+            };
+
             let pane = if reveal_if_open {
                 workspace
                     .read_with(cx, |workspace, cx| {
@@ -6202,7 +6209,12 @@ impl Workspace {
         self.layout = layout
     }
 
-    pub fn pane_for_layout_role(&self, role: layout::LayoutRole) -> Entity<Pane> {
+    pub fn pane_for_layout_role(
+        &mut self,
+        role: layout::LayoutRole,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
         let pane = match self.layout {
             Layout::TwoColumn => {
                 let column = match role {
@@ -6213,7 +6225,13 @@ impl Workspace {
             }
             _ => None,
         };
-        pane.unwrap_or(self.active_pane.clone())
+        if let Some(pane) = pane {
+            return pane;
+        }
+        if self.layout != Layout::FreeForm && self.panes.len() == 1 {
+            return self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx);
+        }
+        self.active_pane.clone()
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {

@@ -1606,6 +1606,9 @@ impl WgpuRendererCore {
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
+                    // Cutouts reveal natively embedded views, which are
+                    // macOS-only and are not implemented by the WGPU renderer.
+                    PrimitiveBatch::Cutouts(_cutouts) => {}
                 }
             }
         }

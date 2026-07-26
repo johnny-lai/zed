@@ -135,6 +135,7 @@ pub struct MetalRenderer {
     monochrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     polychrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     surfaces_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    cutouts_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     unit_vertices: Retained<ProtocolObject<dyn MTLBuffer>>,
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
@@ -405,6 +406,14 @@ impl MetalRenderer {
         let cache = ptr::NonNull::new(cache).context("retrieving CoreVideo Metal texture cache")?;
         // SAFETY: The successful create call transfers ownership of this non-null cache.
         let core_video_texture_cache = unsafe { CFRetained::from_raw(cache) };
+        let cutouts_pipeline_state = build_cutout_pipeline_state(
+            &device,
+            &library,
+            "cutouts",
+            "cutout_vertex",
+            "cutout_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        )?;
 
         Ok(Self {
             device,
@@ -422,6 +431,7 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            cutouts_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -866,6 +876,9 @@ impl MetalRenderer {
                         return Err(error);
                     }
                 }
+                PrimitiveBatch::Cutouts(range) => {
+                    self.draw_cutouts(range, instance_bindings, viewport_size, &command_encoder)
+                }
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             }
         }
@@ -1045,6 +1058,49 @@ impl MetalRenderer {
                 6,
                 quads.len(),
                 quads.start,
+            );
+        }
+    }
+
+    fn draw_cutouts(
+        &self,
+        cutouts: Range<usize>,
+        instance_bindings: &InstanceBindings,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+    ) {
+        if cutouts.is_empty() {
+            return;
+        }
+
+        command_encoder.setRenderPipelineState(&self.cutouts_pipeline_state);
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                CutoutInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.cutouts.buffer),
+                instance_bindings.cutouts.offset,
+                CutoutInputIndex::Cutouts as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.cutouts.buffer),
+                instance_bindings.cutouts.offset,
+                CutoutInputIndex::Cutouts as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                CutoutInputIndex::ViewportSize as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                cutouts.len(),
+                cutouts.start,
             );
         }
     }
@@ -1513,6 +1569,50 @@ fn build_pipeline_state(
         .with_context(|| format!("creating {label} render pipeline"))
 }
 
+/// Builds a pipeline state implementing the Porter-Duff "destination out"
+/// operator: `result = destination * (1 - source_alpha)`. The cutout fragment
+/// shader returns coverage in its alpha channel, so a fully covered pixel is
+/// erased to premultiplied transparency and partially covered edge pixels are
+/// antialiased.
+///
+/// This needs its own pipeline because the standard [`build_pipeline_state`]
+/// blend state uses `source_alpha = One, destination_alpha = One`, under which
+/// alpha only ever accumulates and a cutout cannot be expressed.
+fn build_cutout_pipeline_state(
+    device: &ProtocolObject<dyn MTLDevice>,
+    library: &ProtocolObject<dyn MTLLibrary>,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: MTLPixelFormat,
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
+    let vertex_fn = library
+        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
+    let fragment_fn = library
+        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
+
+    let descriptor = MTLRenderPipelineDescriptor::new();
+    descriptor.setLabel(Some(&NSString::from_str(label)));
+    descriptor.setVertexFunction(Some(vertex_fn.as_ref()));
+    descriptor.setFragmentFunction(Some(fragment_fn.as_ref()));
+    // SAFETY: Index zero is within the pipeline's color attachment array.
+    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+    color_attachment.setPixelFormat(pixel_format);
+    color_attachment.setBlendingEnabled(true);
+    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::Zero);
+    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::Zero);
+    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+
+    device
+        .newRenderPipelineStateWithDescriptor_error(&descriptor)
+        .with_context(|| format!("creating {label} render pipeline"))
+}
+
 fn build_path_sprite_pipeline_state(
     device: &ProtocolObject<dyn MTLDevice>,
     library: &ProtocolObject<dyn MTLLibrary>,
@@ -1601,6 +1701,7 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
+    cutouts: InstanceBinding,
 }
 
 fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
@@ -1614,6 +1715,7 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
             bounds: surface.bounds,
             content_mask: surface.content_mask,
         }))?,
+        cutouts: writer.write(&scene.cutouts)?,
     })
 }
 
@@ -1765,6 +1867,13 @@ enum ShadowInputIndex {
 enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
+    ViewportSize = 2,
+}
+
+#[repr(C)]
+enum CutoutInputIndex {
+    Vertices = 0,
+    Cutouts = 1,
     ViewportSize = 2,
 }
 

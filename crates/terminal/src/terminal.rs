@@ -2729,7 +2729,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUpEvent, cx: &Context<Self>) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, cx: &mut Context<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
@@ -2788,7 +2788,11 @@ impl Terminal {
                     .get(mouse_cell_index)
                     .and_then(|cell| cell.hyperlink())
                 {
-                    cx.open_url(link.uri());
+                    // Emit instead of opening directly so the workspace can
+                    // route the URL to a browser pane.
+                    cx.emit(Event::Open(MaybeNavigationTarget::Url(
+                        link.uri().to_string(),
+                    )));
                 } else if e.modifiers.secondary() {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));

@@ -726,6 +726,7 @@ fn main() {
 
         editor::init(cx);
         image_viewer::init(cx);
+        browser_view::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
 

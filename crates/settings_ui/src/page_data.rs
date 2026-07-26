@@ -10174,8 +10174,30 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
         [
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Browser Link Open Behavior",
+                description: "Where links opened from elsewhere in the app (e.g. the terminal) appear.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("browser.link_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .browser
+                            .as_ref()
+                            .and_then(|browser| browser.link_open_behavior.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .browser
+                            .get_or_insert_default()
+                            .link_open_behavior = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
                 description: "The unit for image file sizes.",

@@ -221,6 +221,9 @@ pub struct SettingsContent {
     /// Default: VSCode
     pub base_keymap: Option<BaseKeymapContent>,
 
+    /// The settings for the built-in browser.
+    pub browser: Option<BrowserSettingsContent>,
+
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 
@@ -1282,6 +1285,42 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<PixelSetting>,
+}
+
+/// The settings for the built-in browser.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct BrowserSettingsContent {
+    /// Where links opened from elsewhere in the app (e.g. the terminal) appear.
+    ///
+    /// Default: "reuse_if_visible"
+    pub link_open_behavior: Option<LinkOpenBehavior>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkOpenBehavior {
+    /// Open links in the most recently used browser pane, creating one if none exists.
+    AlwaysReuse,
+    /// Open links in the most recently used browser pane only if it is currently
+    /// visible, otherwise create a new one.
+    #[default]
+    ReuseIfVisible,
+    /// Always open links in a new browser pane.
+    AlwaysNew,
 }
 
 /// The settings for the image viewer.

@@ -1251,7 +1251,16 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
-                    MaybeNavigationTarget::Url(url) => cx.open_url(url),
+                    MaybeNavigationTarget::Url(url) => {
+                        if workspace
+                            .update(cx, |workspace, cx| {
+                                browser_view::open_link(workspace, url, window, cx)
+                            })
+                            .is_err()
+                        {
+                            cx.open_url(url);
+                        }
+                    }
                     MaybeNavigationTarget::PathLike(path_like_target) => open_path_like_target(
                         &workspace,
                         terminal_view,

@@ -4448,7 +4448,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, split: &SplitVertical, window, cx| {
                 pane.split(SplitDirection::vertical(cx), split.mode, window, cx)
             }))
-            .on_action(cx.listener(|pane, split: &SplitRight, window, cx| {
+            .on_action(cx.listener(|pane, _: &SplitRight, window, cx| {
                 log::info!("pane: split right **");
                 pane.split(SplitDirection::Right, SplitMode::EmptyPane, window, cx)
             }))

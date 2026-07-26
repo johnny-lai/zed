@@ -3,15 +3,15 @@ use std::time::Instant;
 use editor::Editor;
 use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, LayoutId, MouseDownEvent, ParentElement, Pixels, Render, SharedString, Style,
-    Styled, Subscription, Task, WeakEntity, Window, actions, div, relative, size,
+    App, AppContext as _, Bounds, Context, Corners, DispatchPhase, Element, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
+    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, ParentElement, Pixels, Render,
+    SharedString, Style, Styled, Subscription, Task, Window, actions, div, relative, size,
 };
 use settings::{LinkOpenBehavior, RegisterSetting, Settings};
 use ui::{Tooltip, prelude::*};
 use workspace::{
-    LayoutRole, MultiWorkspace, MultiWorkspaceEvent, Pane, Workspace,
+    LayoutRole, Pane, Workspace,
     item::{Item, ItemEvent, TabContentParams},
 };
 
@@ -106,13 +106,7 @@ pub fn open_url(
         });
     } else {
         let pane = workspace.pane_for_layout_role(LayoutRole::Editor, window, cx);
-        let workspace_handle = workspace.weak_handle();
-        let multi_workspace = workspace
-            .multi_workspace()
-            .and_then(|multi_workspace| multi_workspace.upgrade());
-        let browser = cx.new(|cx| {
-            BrowserView::new(url.to_string(), workspace_handle, multi_workspace, window, cx)
-        });
+        let browser = cx.new(|cx| BrowserView::new(url.to_string(), window, cx));
         pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(browser), true, true, None, window, cx)
         });
@@ -166,6 +160,7 @@ pub enum WebViewEvent {
 mod webview {
     use std::rc::Rc;
 
+    use anyhow::Context as _;
     use futures::channel::mpsc::UnboundedSender;
     use gpui::{Bounds, Pixels, Window};
     use util::ResultExt as _;
@@ -209,7 +204,14 @@ mod webview {
                     wry::NewWindowResponse::Deny
                 }
             })
-            .build_as_child(window)?;
+            // Embedded behind GPUI's rendering surface rather than in front of
+            // it, so that modals, menus and tooltips can paint over the page.
+            // `BrowserView` punches a cutout to reveal it.
+            .build_as_child(
+                &window
+                    .native_view_container()
+                    .context("this window does not support embedding native views")?,
+            )?;
         Ok(NativeWebView(Rc::new(webview)))
     }
 
@@ -297,7 +299,6 @@ pub enum BrowserEvent {
 
 pub struct BrowserView {
     focus_handle: FocusHandle,
-    workspace: WeakEntity<Workspace>,
     address_editor: Entity<Editor>,
     webview: Option<webview::NativeWebView>,
     title: Option<SharedString>,
@@ -311,8 +312,6 @@ pub struct BrowserView {
 impl BrowserView {
     pub fn new(
         url: String,
-        workspace: WeakEntity<Workspace>,
-        multi_workspace: Option<Entity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -348,36 +347,14 @@ impl BrowserView {
         });
 
         let focus_handle = cx.focus_handle();
-        let mut subscriptions = vec![cx.on_focus(&focus_handle, window, |browser, _, _| {
+        let subscriptions = vec![cx.on_focus(&focus_handle, window, |browser, _, _| {
             if let Some(webview) = &browser.webview {
                 webview.focus();
             }
         })];
 
-        // A native webview floats above everything GPUI draws, so it must be
-        // hidden explicitly when its workspace stops being the active one in
-        // this window. Re-showing happens when the element is painted again.
-        if let Some(multi_workspace) = multi_workspace {
-            subscriptions.push(cx.subscribe(
-                &multi_workspace,
-                |browser, multi_workspace, event, cx| {
-                    if let MultiWorkspaceEvent::ActiveWorkspaceChanged { .. } = event {
-                        let active_id = multi_workspace.read(cx).workspace().entity_id();
-                        if browser
-                            .workspace
-                            .upgrade()
-                            .is_none_or(|workspace| workspace.entity_id() != active_id)
-                        {
-                            browser.hide_webview();
-                        }
-                    }
-                },
-            ));
-        }
-
         Self {
             focus_handle,
-            workspace,
             address_editor,
             webview,
             title: None,
@@ -431,6 +408,9 @@ impl BrowserView {
         }
     }
 
+    /// Hides the page. An inactive tab paints no cutout, so its page is already
+    /// covered, but it must still be hidden or it would show through the cutout
+    /// of *another* browser tab stacked in the same container.
     fn hide_webview(&self) {
         if let Some(webview) = &self.webview {
             webview.focus_parent();
@@ -664,7 +644,7 @@ impl Element for WebViewElement {
         let webview = self.browser.read(cx).webview.clone()?;
         webview.set_bounds(bounds);
         webview.set_visible(true);
-        Some(window.insert_hitbox(bounds, HitboxBehavior::Normal))
+        Some(window.insert_hitbox(bounds, HitboxBehavior::NativeView))
     }
 
     fn paint(
@@ -680,6 +660,12 @@ impl Element for WebViewElement {
         if hitbox.is_none() {
             return;
         }
+
+        // Clears the rendering surface so the page behind it shows through.
+        // Anything painted after this — modals, menus, tooltips — paints over
+        // the cutout and so appears above the page.
+        window.paint_cutout(bounds, Corners::default());
+
         let webview = self.browser.read(cx).webview.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, _cx| {
             if phase == DispatchPhase::Bubble

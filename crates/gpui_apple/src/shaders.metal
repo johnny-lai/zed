@@ -554,6 +554,49 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   return input.color * float4(1., 1., 1., alpha);
 }
 
+struct CutoutVertexOutput {
+  uint cutout_id [[flat]];
+  float4 position [[position]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct CutoutFragmentInput {
+  uint cutout_id [[flat]];
+  float4 position [[position]];
+};
+
+vertex CutoutVertexOutput cutout_vertex(uint unit_vertex_id [[vertex_id]],
+                                        uint cutout_id [[instance_id]],
+                                        constant float2 *unit_vertices
+                                        [[buffer(CutoutInputIndex_Vertices)]],
+                                        constant Cutout *cutouts
+                                        [[buffer(CutoutInputIndex_Cutouts)]],
+                                        constant Size_DevicePixels *viewport_size
+                                        [[buffer(CutoutInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  Cutout cutout = cutouts[cutout_id];
+  float4 device_position =
+      to_device_position(unit_vertex, cutout.bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, cutout.bounds,
+                                                 cutout.content_mask.bounds);
+  return CutoutVertexOutput{
+      cutout_id,
+      device_position,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+// Returns coverage in the alpha channel. The cutouts pipeline blends with the
+// "destination out" operator, so this multiplies the drawable by (1 - coverage),
+// erasing the region to premultiplied transparency with antialiased edges.
+fragment float4 cutout_fragment(CutoutFragmentInput input [[stage_in]],
+                                constant Cutout *cutouts
+                                [[buffer(CutoutInputIndex_Cutouts)]]) {
+  Cutout cutout = cutouts[input.cutout_id];
+  float distance =
+      quad_sdf(input.position.xy, cutout.bounds, cutout.corner_radii);
+  return float4(0.0, 0.0, 0.0, saturate(0.5 - distance));
+}
+
 struct UnderlineVertexOutput {
   float4 position [[position]];
   float4 color [[flat]];

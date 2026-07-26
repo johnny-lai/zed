@@ -80,6 +80,7 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut NATIVE_VIEW_CONTAINER_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -295,6 +296,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(hitTest:),
+                hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
+            );
+
+            decl.add_method(
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
@@ -312,6 +318,28 @@ unsafe fn build_classes() {
             );
             decl.register()
         };
+        NATIVE_VIEW_CONTAINER_CLASS = {
+            let mut decl = ClassDecl::new("GPUINativeViewContainer", class!(NSView)).unwrap();
+            decl.add_method(
+                sel!(hitTest:),
+                native_view_container_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
+            );
+            decl.register()
+        };
+    }
+}
+
+/// The container itself is not interactive: only the native views embedded in it
+/// are. Without this, it would claim every point inside its bounds, swallowing
+/// clicks that fall in a cutout whose embedded view is hidden.
+extern "C" fn native_view_container_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
+    unsafe {
+        let hit: id = msg_send![super(this, class!(NSView)), hitTest: point];
+        if hit == this as *const Object as id {
+            nil
+        } else {
+            hit
+        }
     }
 }
 
@@ -592,6 +620,11 @@ struct MacWindowState {
     native_window: id,
     native_view: NonNull<Object>,
     blurred_view: Option<id>,
+    // A view behind `native_view` hosting embedded native views, and the regions
+    // of the window in which mouse events should reach them. See
+    // `PlatformWindow::native_view_container`.
+    native_view_container: Option<id>,
+    native_view_passthrough: Vec<Bounds<Pixels>>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
@@ -1018,6 +1051,8 @@ impl MacWindow {
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
+                native_view_container: None,
+                native_view_passthrough: Vec::new(),
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
                 cursor_visible,
@@ -1658,7 +1693,11 @@ impl PlatformWindow for MacWindow {
         this.background_appearance = background_appearance;
 
         let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
-        this.renderer.update_transparency(!opaque);
+        // An embedded native view is only visible through a transparent surface,
+        // so a container keeps the layer non-opaque regardless of appearance.
+        let has_native_views = this.native_view_container.is_some();
+        this.renderer
+            .update_transparency(!opaque || has_native_views);
 
         unsafe {
             this.native_window.setOpaque_(opaque as BOOL);
@@ -1695,6 +1734,47 @@ impl PlatformWindow for MacWindow {
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         self.0.as_ref().lock().background_appearance
+    }
+
+    fn native_view_container(&self) -> Option<gpui::NativeViewContainer> {
+        let mut this = self.0.as_ref().lock();
+        let container = if let Some(container) = this.native_view_container {
+            container
+        } else {
+            unsafe {
+                let content_view = this.native_window.contentView();
+                let mut container: id = msg_send![NATIVE_VIEW_CONTAINER_CLASS, alloc];
+                container = NSView::initWithFrame_(container, NSView::bounds(content_view));
+                container.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+
+                // Directly below the view GPUI renders into, but still above the
+                // blur view, which is inserted relative to `nil`.
+                let _: () = msg_send![
+                    content_view,
+                    addSubview: container
+                    positioned: NSWindowOrderingMode::NSWindowBelow
+                    relativeTo: this.native_view.as_ptr()
+                ];
+
+                // Embedded views are only visible where the rendering surface is
+                // transparent, which an opaque layer can never be.
+                this.renderer.update_transparency(true);
+                this.native_view_container = Some(container.autorelease());
+                container
+            }
+        };
+
+        Some(gpui::NativeViewContainer::new(
+            raw_window_handle::RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
+                NonNull::new(container.cast())?,
+            )),
+        ))
+    }
+
+    fn set_native_view_passthrough(&self, regions: &[Bounds<Pixels>]) {
+        let mut this = self.0.as_ref().lock();
+        this.native_view_passthrough.clear();
+        this.native_view_passthrough.extend_from_slice(regions);
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -3212,6 +3292,39 @@ extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel
         unsafe { msg_send![this, bounds] }
     } else {
         zero_rect
+    }
+}
+
+/// Lets mouse events reach natively embedded views, which are siblings *behind*
+/// this view and would otherwise never be hit-tested. Returning `nil` makes
+/// AppKit continue on to the views below.
+extern "C" fn hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
+    unsafe {
+        let hit: id = msg_send![super(this, class!(NSView)), hitTest: point];
+        if hit.is_null() {
+            return hit;
+        }
+
+        let window_state = get_window_state(this);
+        // AppKit calls this at arbitrary points in the event loop, potentially
+        // while GPUI holds the lock. Never block: fall back to handling the
+        // event ourselves rather than risk deadlocking the main thread.
+        let Some(lock) = window_state.as_ref().try_lock() else {
+            return hit;
+        };
+        if lock.native_view_passthrough.is_empty() {
+            return hit;
+        }
+
+        // `point` is in the superview's coordinates, which share this view's
+        // origin and size, so this is the usual bottom-left to top-left flip.
+        let position = convert_mouse_position(point, lock.content_size().height);
+        let passthrough = lock
+            .native_view_passthrough
+            .iter()
+            .any(|region| region.contains(&position));
+
+        if passthrough { nil } else { hit }
     }
 }
 

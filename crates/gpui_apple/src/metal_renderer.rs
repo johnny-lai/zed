@@ -126,6 +126,7 @@ pub struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    cutouts_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -323,6 +324,14 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let cutouts_pipeline_state = build_cutout_pipeline_state(
+            &device,
+            &library,
+            "cutouts",
+            "cutout_vertex",
+            "cutout_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
@@ -345,6 +354,7 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            cutouts_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -731,6 +741,9 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::Cutouts(range) => {
+                    self.draw_cutouts(range, instance_bindings, viewport_size, command_encoder)
+                }
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             }
         }
@@ -891,6 +904,49 @@ impl MetalRenderer {
             6,
             quads.len() as u64,
             quads.start as u64,
+        );
+    }
+
+    fn draw_cutouts(
+        &self,
+        cutouts: Range<usize>,
+        instance_bindings: &InstanceBindings,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if cutouts.is_empty() {
+            return;
+        }
+
+        command_encoder.set_render_pipeline_state(&self.cutouts_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            CutoutInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            CutoutInputIndex::Cutouts as u64,
+            Some(&instance_bindings.cutouts.buffer),
+            instance_bindings.cutouts.offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            CutoutInputIndex::Cutouts as u64,
+            Some(&instance_bindings.cutouts.buffer),
+            instance_bindings.cutouts.offset as u64,
+        );
+
+        command_encoder.set_vertex_bytes(
+            CutoutInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        command_encoder.draw_primitives_instanced_base_instance(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            cutouts.len() as u64,
+            cutouts.start as u64,
         );
     }
 
@@ -1300,6 +1356,49 @@ fn build_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
+/// Builds a pipeline state implementing the Porter-Duff "destination out"
+/// operator: `result = destination * (1 - source_alpha)`. The cutout fragment
+/// shader returns coverage in its alpha channel, so a fully covered pixel is
+/// erased to premultiplied transparency and partially covered edge pixels are
+/// antialiased.
+///
+/// This needs its own pipeline because the standard [`build_pipeline_state`]
+/// blend state uses `source_alpha = One, destination_alpha = One`, under which
+/// alpha only ever accumulates and a cutout cannot be expressed.
+fn build_cutout_pipeline_state(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: metal::MTLPixelFormat,
+) -> metal::RenderPipelineState {
+    let vertex_fn = library
+        .get_function(vertex_fn_name, None)
+        .expect("error locating vertex function");
+    let fragment_fn = library
+        .get_function(fragment_fn_name, None)
+        .expect("error locating fragment function");
+
+    let descriptor = metal::RenderPipelineDescriptor::new();
+    descriptor.set_label(label);
+    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(true);
+    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::Zero);
+    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::Zero);
+    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+
+    device
+        .new_render_pipeline_state(&descriptor)
+        .expect("could not create render pipeline state")
+}
+
 fn build_path_sprite_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
@@ -1386,6 +1485,7 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
+    cutouts: InstanceBinding,
 }
 
 fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
@@ -1399,6 +1499,7 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
             bounds: surface.bounds,
             content_mask: surface.content_mask,
         }))?,
+        cutouts: writer.write(&scene.cutouts)?,
     })
 }
 
@@ -1544,6 +1645,13 @@ enum ShadowInputIndex {
 enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
+    ViewportSize = 2,
+}
+
+#[repr(C)]
+enum CutoutInputIndex {
+    Vertices = 0,
+    Cutouts = 1,
     ViewportSize = 2,
 }
 

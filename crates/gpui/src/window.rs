@@ -12,7 +12,8 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NativeViewContainer, Path, Pixels,
+    PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
@@ -43,7 +44,7 @@ use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use scheduler::Instant;
 use slotmap::SlotMap;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -921,6 +922,61 @@ pub enum HitboxBehavior {
     /// inconsistent UI where clicks and moves interact with elements that are not considered to
     /// be hovered.
     BlockMouseExceptScroll,
+
+    /// The hitbox covers a native platform view embedded behind the window's
+    /// rendering surface (see [`Window::native_view_container`]).
+    ///
+    /// For GPUI's own hit testing this behaves exactly like
+    /// [`HitboxBehavior::Normal`]. It additionally tells the platform window
+    /// that mouse events in this region belong to the embedded view, except
+    /// where a hitbox in front of it blocks the mouse.
+    NativeView,
+}
+
+/// Beyond this many rects, a native view's mouse-passthrough region is treated
+/// as too fragmented to represent and is dropped entirely.
+const MAX_NATIVE_VIEW_PASSTHROUGH_REGIONS: usize = 32;
+
+/// Splits `bounds` into up to four rects covering `bounds` minus `cut`.
+fn subtract_bounds(
+    bounds: Bounds<Pixels>,
+    cut: Bounds<Pixels>,
+) -> SmallVec<[Bounds<Pixels>; 4]> {
+    let overlap = bounds.intersect(&cut);
+    if overlap.is_empty() {
+        return smallvec![bounds];
+    }
+
+    let mut remaining = SmallVec::new();
+    let mut push = |left: Pixels, top: Pixels, right: Pixels, bottom: Pixels| {
+        if right > left && bottom > top {
+            remaining.push(Bounds::from_corners(point(left, top), point(right, bottom)));
+        }
+    };
+
+    // Full-width strips above and below the overlap, then the strips to its
+    // left and right spanning only the overlap's own vertical extent.
+    push(bounds.left(), bounds.top(), bounds.right(), overlap.top());
+    push(
+        bounds.left(),
+        overlap.bottom(),
+        bounds.right(),
+        bounds.bottom(),
+    );
+    push(
+        bounds.left(),
+        overlap.top(),
+        overlap.left(),
+        overlap.bottom(),
+    );
+    push(
+        overlap.right(),
+        overlap.top(),
+        bounds.right(),
+        overlap.bottom(),
+    );
+
+    remaining
 }
 
 /// An identifier for a tooltip.
@@ -1136,6 +1192,9 @@ pub struct Window {
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
+    /// The passthrough regions most recently sent to the platform window, so
+    /// that unchanged frames don't re-send them.
+    native_view_passthrough: Vec<Bounds<Pixels>>,
     display_id: Option<DisplayId>,
     is_resizable: bool,
     is_minimizable: bool,
@@ -1837,6 +1896,7 @@ impl Window {
             invalidator,
             removed: false,
             platform_window,
+            native_view_passthrough: Vec::new(),
             display_id,
             is_resizable,
             is_minimizable,
@@ -3023,6 +3083,11 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
+        let passthrough = self.native_view_passthrough_regions();
+        if passthrough != self.native_view_passthrough {
+            self.platform_window.set_native_view_passthrough(&passthrough);
+            self.native_view_passthrough = passthrough;
+        }
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
@@ -4609,6 +4674,98 @@ impl Window {
             bounds,
             content_mask,
             image_buffer,
+        });
+    }
+
+    /// Regions where mouse events should reach natively embedded views: the
+    /// bounds of every [`HitboxBehavior::NativeView`] hitbox, minus each hitbox
+    /// in front of it that blocks the mouse.
+    ///
+    /// This is derived from hitboxes rather than tracked alongside the cutouts
+    /// they pair with, because reusing a cached prepaint replays hitboxes but
+    /// not arbitrary per-frame state.
+    fn native_view_passthrough_regions(&self) -> Vec<Bounds<Pixels>> {
+        let hitboxes = &self.rendered_frame.hitboxes;
+        let mut regions = Vec::new();
+
+        for (ix, hitbox) in hitboxes.iter().enumerate() {
+            if hitbox.behavior != HitboxBehavior::NativeView {
+                continue;
+            }
+
+            let mut rects: SmallVec<[Bounds<Pixels>; 8]> =
+                smallvec![hitbox.bounds.intersect(&hitbox.content_mask.bounds)];
+
+            // Hitboxes later in the list were inserted later during prepaint and
+            // are therefore in front, the same ordering `hit_test` relies on.
+            for occluder in &hitboxes[ix + 1..] {
+                if !matches!(
+                    occluder.behavior,
+                    HitboxBehavior::BlockMouse | HitboxBehavior::BlockMouseExceptScroll
+                ) {
+                    continue;
+                }
+                let occluder = occluder.bounds.intersect(&occluder.content_mask.bounds);
+                if occluder.is_empty() {
+                    continue;
+                }
+                rects = rects
+                    .iter()
+                    .flat_map(|rect| subtract_bounds(*rect, occluder))
+                    .collect();
+                if rects.is_empty() || rects.len() > MAX_NATIVE_VIEW_PASSTHROUGH_REGIONS {
+                    break;
+                }
+            }
+
+            // Rather than approximate a heavily fragmented region, hand the
+            // events back to GPUI. A briefly unclickable embedded view beats
+            // clicks leaking through content that covers it.
+            if rects.len() > MAX_NATIVE_VIEW_PASSTHROUGH_REGIONS {
+                return Vec::new();
+            }
+            regions.extend(rects);
+        }
+
+        regions
+    }
+
+    /// Returns a container for embedding native platform views *behind* this
+    /// window's rendered content, creating it on first use.
+    ///
+    /// The container implements [`raw_window_handle::HasWindowHandle`], so it
+    /// can be passed to libraries that embed a native view into a parent. An
+    /// embedded view stays hidden behind the window's rendering surface until a
+    /// region of that surface is cleared with [`Window::paint_cutout`].
+    ///
+    /// Returns `None` on platforms that do not support native view embedding.
+    pub fn native_view_container(&self) -> Option<NativeViewContainer> {
+        self.platform_window.native_view_container()
+    }
+
+    /// Clears a region of this window's rendered content to full transparency,
+    /// revealing any native view embedded behind the window's rendering surface
+    /// via [`Window::native_view_container`], and letting mouse events in that
+    /// region reach it.
+    ///
+    /// Content painted after this (modals, menus, tooltips) paints over the
+    /// cutout normally, so it appears above the embedded view.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_cutout(&mut self, bounds: Bounds<Pixels>, corner_radii: Corners<Pixels>) {
+        use crate::Cutout;
+
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
+        self.next_frame.scene.insert_primitive(Cutout {
+            order: 0,
+            pad: 0,
+            bounds,
+            content_mask,
+            corner_radii: corner_radii.scale(scale_factor),
         });
     }
 

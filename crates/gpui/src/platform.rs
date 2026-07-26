@@ -51,7 +51,7 @@ use futures::channel::oneshot;
 use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, DynamicImage, Frame};
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
@@ -812,6 +812,35 @@ pub enum TextInputStateChange {
     ContentChanged,
 }
 
+/// A handle to a container that sits *behind* a window's rendered content, into
+/// which native platform views can be embedded.
+///
+/// This implements [`HasWindowHandle`], so it can be passed directly to crates
+/// that embed native views into a parent (for example a webview library's
+/// "build as child" entry point).
+///
+/// An embedded view is hidden by the window's rendering surface until a region
+/// of that surface is cleared with [`crate::Window::paint_cutout`].
+#[derive(Clone)]
+pub struct NativeViewContainer {
+    raw: raw_window_handle::RawWindowHandle,
+}
+
+impl NativeViewContainer {
+    /// Creates a container handle from a platform-specific raw window handle.
+    pub fn new(raw: raw_window_handle::RawWindowHandle) -> Self {
+        Self { raw }
+    }
+}
+
+impl HasWindowHandle for NativeViewContainer {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+        // SAFETY: the container is owned by the window it was obtained from, and
+        // both are confined to the platform thread.
+        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(self.raw) })
+    }
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
@@ -869,6 +898,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
+
+    /// Returns a container for embedding native platform views behind this
+    /// window's rendered content, creating it if necessary. Returns `None` on
+    /// platforms without support. See [`crate::Window::native_view_container`].
+    fn native_view_container(&self) -> Option<NativeViewContainer> {
+        None
+    }
+
+    /// Sets the regions, in window coordinates, where mouse events should be
+    /// routed to natively embedded views rather than handled by GPUI.
+    fn set_native_view_passthrough(&self, _regions: &[Bounds<Pixels>]) {}
 
     // macOS specific methods
     fn get_title(&self) -> String {

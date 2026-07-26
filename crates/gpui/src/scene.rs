@@ -50,6 +50,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub cutouts: Vec<Cutout>,
 }
 
 #[expect(missing_docs)]
@@ -66,6 +67,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.cutouts.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -133,6 +135,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::Cutout(cutout) => {
+                cutout.order = order;
+                self.cutouts.push(*cutout);
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -160,6 +166,7 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.cutouts.sort_by_key(|cutout| cutout.order);
     }
 
     #[cfg_attr(
@@ -187,6 +194,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            cutouts_start: 0,
+            cutouts_iter: self.cutouts.iter().peekable(),
         }
     }
 }
@@ -200,6 +209,10 @@ impl Scene {
     allow(dead_code)
 )]
 pub(crate) enum PrimitiveKind {
+    // Ordered first so that, at an equal draw order, a cutout is cleared before
+    // anything else at that order paints over it. The failure mode is then a
+    // filled-in cutout rather than erased UI.
+    Cutout,
     Shadow,
     #[default]
     Quad,
@@ -228,6 +241,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    Cutout(Cutout),
 }
 
 #[expect(missing_docs)]
@@ -242,6 +256,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::Cutout(cutout) => &cutout.bounds,
         }
     }
 
@@ -255,6 +270,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::Cutout(cutout) => &cutout.content_mask,
         }
     }
 }
@@ -283,6 +299,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    cutouts_start: usize,
+    cutouts_iter: Peekable<slice::Iter<'a, Cutout>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -315,6 +333,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.cutouts_iter.peek().map(|c| c.order),
+                PrimitiveKind::Cutout,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -461,6 +483,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::Cutout => {
+                let cutouts_start = self.cutouts_start;
+                let mut cutouts_end = cutouts_start + 1;
+                self.cutouts_iter.next();
+                while self
+                    .cutouts_iter
+                    .next_if(|cutout| (cutout.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    cutouts_end += 1;
+                }
+                self.cutouts_start = cutouts_end;
+                Some(PrimitiveBatch::Cutouts(cutouts_start..cutouts_end))
+            }
         }
     }
 }
@@ -493,6 +529,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    Cutouts(Range<usize>),
 }
 
 impl PrimitiveBatch {
@@ -525,6 +562,7 @@ impl PrimitiveBatch {
                 )
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+            Self::Cutouts(range) => format!("cutouts ({})", range.len()),
         }
     }
 }
@@ -776,6 +814,25 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// A region cleared to full transparency, revealing whatever sits behind the
+/// window's rendering surface. See [`crate::Window::paint_cutout`].
+#[derive(Default, Debug, Copy, Clone)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct Cutout {
+    pub order: DrawOrder,
+    pub pad: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+}
+
+impl From<Cutout> for Primitive {
+    fn from(cutout: Cutout) -> Self {
+        Primitive::Cutout(cutout)
     }
 }
 

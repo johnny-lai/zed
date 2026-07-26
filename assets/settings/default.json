@@ -25,6 +25,19 @@
   // 8. "Cursor"
   // 9. "None"
   "base_keymap": "Zed",
+  // Settings for the built-in browser.
+  "browser": {
+    // Where links opened from elsewhere in the app (e.g. the terminal) appear.
+    // May take 3 values:
+    //  1. Open links in the most recently used browser pane, creating one if none exists:
+    //     "always_reuse"
+    //  2. Reuse the most recently used browser pane only if it is currently visible,
+    //     otherwise create a new one:
+    //     "reuse_if_visible"
+    //  3. Always open links in a new browser pane:
+    //     "always_new"
+    "link_open_behavior": "reuse_if_visible"
+  },
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.

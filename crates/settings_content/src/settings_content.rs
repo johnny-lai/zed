@@ -225,6 +225,9 @@ pub struct SettingsContent {
     /// Default: VSCode
     pub base_keymap: Option<BaseKeymapContent>,
 
+    /// The settings for the built-in browser.
+    pub browser: Option<BrowserSettingsContent>,
+
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 
@@ -406,7 +409,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
         call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
-        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        agent_servers, audio, auto_update, base_keymap, browser, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
@@ -1359,6 +1362,42 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<PixelSetting>,
+}
+
+/// The settings for the built-in browser.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct BrowserSettingsContent {
+    /// Where links opened from elsewhere in the app (e.g. the terminal) appear.
+    ///
+    /// Default: "reuse_if_visible"
+    pub link_open_behavior: Option<LinkOpenBehavior>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkOpenBehavior {
+    /// Open links in the most recently used browser pane, creating one if none exists.
+    AlwaysReuse,
+    /// Open links in the most recently used browser pane only if it is currently
+    /// visible, otherwise create a new one.
+    #[default]
+    ReuseIfVisible,
+    /// Always open links in a new browser pane.
+    AlwaysNew,
 }
 
 /// The settings for the image viewer.

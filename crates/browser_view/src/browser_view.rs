@@ -256,10 +256,6 @@ mod webview {
         pub fn focus(&self) {
             self.0.focus().log_err();
         }
-
-        pub fn focus_parent(&self) {
-            self.0.focus_parent().log_err();
-        }
     }
 }
 
@@ -289,7 +285,6 @@ mod webview {
         pub fn forward(&self) {}
         pub fn reload(&self) {}
         pub fn focus(&self) {}
-        pub fn focus_parent(&self) {}
     }
 }
 
@@ -411,9 +406,9 @@ impl BrowserView {
     /// Hides the page. An inactive tab paints no cutout, so its page is already
     /// covered, but it must still be hidden or it would show through the cutout
     /// of *another* browser tab stacked in the same container.
-    fn hide_webview(&self) {
+    fn hide_webview(&self, window: &Window) {
         if let Some(webview) = &self.webview {
-            webview.focus_parent();
+            window.reclaim_native_focus();
             webview.set_visible(false);
         }
     }
@@ -502,8 +497,8 @@ impl Item for BrowserView {
         Some(self.current_url.clone().into())
     }
 
-    fn deactivated(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.hide_webview();
+    fn deactivated(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+        self.hide_webview(window);
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -666,14 +661,11 @@ impl Element for WebViewElement {
         // the cutout and so appears above the page.
         window.paint_cutout(bounds, Corners::default());
 
-        let webview = self.browser.read(cx).webview.clone();
-        window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, _cx| {
-            if phase == DispatchPhase::Bubble
-                && !bounds.contains(&event.position)
-                && let Some(webview) = &webview
-            {
+        let has_webview = self.browser.read(cx).webview.is_some();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _cx| {
+            if phase == DispatchPhase::Bubble && has_webview && !bounds.contains(&event.position) {
                 // Clicking outside the page returns keyboard focus to GPUI.
-                webview.focus_parent();
+                window.reclaim_native_focus();
             }
         });
     }

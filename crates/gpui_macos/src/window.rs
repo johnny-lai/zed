@@ -1777,6 +1777,14 @@ impl PlatformWindow for MacWindow {
         this.native_view_passthrough.extend_from_slice(regions);
     }
 
+    fn reclaim_native_focus(&self) {
+        let this = self.0.as_ref().lock();
+        unsafe {
+            this.native_window
+                .makeFirstResponder_(this.native_view.as_ptr());
+        }
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         false
     }

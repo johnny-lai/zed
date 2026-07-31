@@ -4743,6 +4743,18 @@ impl Window {
         self.platform_window.native_view_container()
     }
 
+    /// Restores OS keyboard focus to the view GPUI renders into. Call this
+    /// after a natively embedded view (e.g. one obtained via
+    /// [`Window::native_view_container`]) has taken first responder / OS
+    /// keyboard focus away from GPUI, so that keystrokes reach GPUI's own
+    /// key event handling again.
+    ///
+    /// This only affects OS-level input routing; it does not change GPUI's
+    /// own [`FocusHandle`]-based focus, which is tracked independently.
+    pub fn reclaim_native_focus(&self) {
+        self.platform_window.reclaim_native_focus();
+    }
+
     /// Clears a region of this window's rendered content to full transparency,
     /// revealing any native view embedded behind the window's rendering surface
     /// via [`Window::native_view_container`], and letting mouse events in that

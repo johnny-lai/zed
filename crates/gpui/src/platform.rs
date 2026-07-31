@@ -910,6 +910,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// routed to natively embedded views rather than handled by GPUI.
     fn set_native_view_passthrough(&self, _regions: &[Bounds<Pixels>]) {}
 
+    /// Restores first responder / OS keyboard focus status to the view GPUI
+    /// renders into. Used to reclaim keyboard input after a natively embedded
+    /// view (e.g. one obtained via [`PlatformWindow::native_view_container`])
+    /// has taken it. See [`crate::Window::reclaim_native_focus`].
+    fn reclaim_native_focus(&self) {}
+
     // macOS specific methods
     fn get_title(&self) -> String {
         String::new()

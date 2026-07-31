@@ -342,11 +342,22 @@ impl BrowserView {
         });
 
         let focus_handle = cx.focus_handle();
-        let subscriptions = vec![cx.on_focus(&focus_handle, window, |browser, _, _| {
-            if let Some(webview) = &browser.webview {
-                webview.focus();
-            }
-        })];
+        let subscriptions = vec![
+            cx.on_focus(&focus_handle, window, |browser, _, _| {
+                if let Some(webview) = &browser.webview {
+                    webview.focus();
+                }
+            }),
+            // GPUI's own focus can move away (e.g. a modal like the file
+            // finder opening via a keybinding) without any mouse event for
+            // `WebViewElement` to observe, so the webview would otherwise
+            // keep OS keyboard focus indefinitely.
+            cx.on_blur(&focus_handle, window, |browser, window, _cx| {
+                if browser.webview.is_some() {
+                    window.reclaim_native_focus();
+                }
+            }),
+        ];
 
         Self {
             focus_handle,

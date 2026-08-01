@@ -80,6 +80,9 @@ pub enum OpenRequestKind {
     GitCommit {
         sha: String,
     },
+    OpenUrl {
+        url: String,
+    },
 }
 
 impl std::fmt::Debug for OpenRequestKind {
@@ -118,6 +121,7 @@ impl std::fmt::Debug for OpenRequestKind {
                 .field("repo_url", repo_url)
                 .finish(),
             Self::GitCommit { sha } => f.debug_struct("GitCommit").field("sha", sha).finish(),
+            Self::OpenUrl { url } => f.debug_struct("OpenUrl").field("url", url).finish(),
         }
     }
 }
@@ -194,6 +198,8 @@ impl OpenRequest {
                 this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
+            } else if url.starts_with("http://") || url.starts_with("https://") {
+                this.kind = Some(OpenRequestKind::OpenUrl { url });
             } else if let Some(zed_link) = parse_zed_link(&url, cx) {
                 match zed_link {
                     ZedLink::Channel { channel_id } => {
@@ -1538,6 +1544,29 @@ mod tests {
         });
 
         assert!(result.is_err());
+    }
+
+    #[gpui::test]
+    fn test_parse_http_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["https://example.com".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::OpenUrl { url }) => {
+                assert_eq!(url, "https://example.com");
+            }
+            _ => panic!("Expected OpenUrl kind"),
+        }
     }
 
     fn agent_url_with_prompt(prompt: &str) -> String {

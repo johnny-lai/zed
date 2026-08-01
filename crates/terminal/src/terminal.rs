@@ -668,6 +668,130 @@ pub fn insert_zed_terminal_env(
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
 }
 
+/// Body of a POSIX-compatible `open` shell function: bare `http(s)://` URLs
+/// are handed to the running Zed instance (via the `zetty` CLI, so the URL
+/// opens in Zed's browser pane instead of the system browser); everything
+/// else falls through unchanged to the real `open`. Shared verbatim between
+/// the zsh and bash integrations below (valid syntax in both). Unlike a
+/// `PATH` entry, a shell function is resolved before `PATH` is even
+/// consulted, so it isn't affected by macOS's `path_helper` reordering
+/// `PATH` ahead of a shim directory during login-shell startup.
+#[cfg(target_os = "macos")]
+const OPEN_URL_SHELL_FUNCTION: &str = "\
+open() {\n\
+  if [ \"$#\" -gt 0 ]; then\n\
+    local _zed_open_only_urls=1 _zed_open_arg\n\
+    for _zed_open_arg in \"$@\"; do\n\
+      case \"$_zed_open_arg\" in\n\
+        http://*|https://*) ;;\n\
+        *) _zed_open_only_urls=0 ;;\n\
+      esac\n\
+    done\n\
+    if [ \"$_zed_open_only_urls\" = 1 ] && command -v zetty >/dev/null 2>&1; then\n\
+      command zetty \"$@\"\n\
+      return\n\
+    fi\n\
+  fi\n\
+  command open \"$@\"\n\
+}\n";
+
+/// Contents of the `.zshenv` placed at `<dir>/zsh/.zshenv`, loaded by
+/// pointing `ZDOTDIR` at that directory. Restores the caller's real
+/// `ZDOTDIR` (or unsets it) and re-sources the user's actual `.zshenv`
+/// before defining the `open` function, so `.zprofile`/`.zshrc` (and
+/// `path_helper`) still resolve from the user's real dotfiles and run
+/// exactly as they would without this integration. Modeled on the
+/// equivalent ZDOTDIR-chaining technique in Ghostty's zsh shell
+/// integration.
+#[cfg(target_os = "macos")]
+fn zsh_open_shim_zshenv_contents() -> String {
+    format!(
+        "\
+if [[ -n \"${{ZED_OPEN_SHIM_ZDOTDIR+x}}\" ]]; then\n\
+    'builtin' 'export' ZDOTDIR=\"$ZED_OPEN_SHIM_ZDOTDIR\"\n\
+    'builtin' 'unset' 'ZED_OPEN_SHIM_ZDOTDIR'\n\
+else\n\
+    'builtin' 'unset' 'ZDOTDIR'\n\
+fi\n\
+\n\
+'builtin' 'typeset' _zed_open_shim_file=${{ZDOTDIR-$HOME}}\"/.zshenv\"\n\
+[[ ! -r \"$_zed_open_shim_file\" ]] || 'builtin' 'source' '--' \"$_zed_open_shim_file\"\n\
+'builtin' 'unset' '_zed_open_shim_file'\n\
+\n\
+{OPEN_URL_SHELL_FUNCTION}"
+    )
+}
+
+/// Lazily writes the zsh `open`-shim `.zshenv` (see
+/// [`zsh_open_shim_zshenv_contents`]) to a process-lifetime temp directory
+/// and returns the directory meant to be pointed at by `ZDOTDIR` (i.e. the
+/// `zsh` subdirectory containing it). Returns `None` if the file couldn't be
+/// written.
+#[cfg(target_os = "macos")]
+fn zsh_open_shim_zdotdir() -> Option<&'static Path> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let root = tempfile::Builder::new()
+            .prefix("zetty-open-shim-zsh")
+            .tempdir()
+            .log_err()?
+            .keep();
+        let zdotdir = root.join("zsh");
+        std::fs::create_dir_all(&zdotdir).log_err()?;
+        std::fs::write(zdotdir.join(".zshenv"), zsh_open_shim_zshenv_contents()).log_err()?;
+        Some(zdotdir)
+    })
+    .as_deref()
+}
+
+/// Defines the `open` shell function (see [`OPEN_URL_SHELL_FUNCTION`])
+/// directly in a locally-spawned zsh or bash session, immune to `PATH`
+/// reordering by `path_helper` since function lookup precedes `PATH`
+/// lookup entirely. No-op for other shells.
+///
+/// For bash, which has no `.zshenv`-equivalent file sourced unconditionally
+/// before login/interactive startup, the function is instead injected via
+/// `PROMPT_COMMAND`, which bash runs once right before the first prompt is
+/// drawn (i.e. after `.bash_profile`/`.bashrc` have already run) and which
+/// we immediately unset so it only fires once. If the user's own
+/// `.bash_profile`/`.bashrc` unconditionally reassigns `PROMPT_COMMAND`
+/// (rather than appending to it), that overwrites ours before it ever runs
+/// and the shim silently doesn't apply for that session — the same
+/// limitation this technique has in other terminal apps that use it (e.g.
+/// cmux/Ghostty), and there's no fully reliable bash equivalent of zsh's
+/// `ZDOTDIR` chaining to avoid it.
+#[cfg(target_os = "macos")]
+fn apply_open_url_shell_function(env: &mut HashMap<String, String>, shell: &Shell) {
+    let program = shell.program();
+    let shell_name = Path::new(&program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    match shell_name {
+        "zsh" => {
+            let Some(zdotdir) = zsh_open_shim_zdotdir() else {
+                return;
+            };
+            if let Some(existing_zdotdir) = env.get("ZDOTDIR").filter(|value| !value.is_empty()) {
+                env.insert(
+                    "ZED_OPEN_SHIM_ZDOTDIR".to_string(),
+                    existing_zdotdir.clone(),
+                );
+            }
+            env.insert("ZDOTDIR".to_string(), zdotdir.display().to_string());
+        }
+        "bash" => {
+            let mut prompt_command = "unset PROMPT_COMMAND\n".to_string();
+            prompt_command.push_str(OPEN_URL_SHELL_FUNCTION);
+            env.insert("PROMPT_COMMAND".to_string(), prompt_command);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_open_url_shell_function(_env: &mut HashMap<String, String>, _shell: &Shell) {}
+
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -1136,6 +1260,10 @@ impl TerminalBuilder {
             }
 
             insert_zed_terminal_env(&mut env, &version);
+
+            if !is_remote_terminal {
+                apply_open_url_shell_function(&mut env, &shell);
+            }
 
             #[derive(Default)]
             struct ShellParams {

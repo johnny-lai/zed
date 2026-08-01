@@ -1251,6 +1251,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            OpenRequestKind::OpenUrl { url } => {
+                workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                    browser_view::open_link(workspace, &url, window, cx);
+                });
+            }
         }
 
         return;

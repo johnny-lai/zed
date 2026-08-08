@@ -113,6 +113,20 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
+
+    cx.on_action(move |_: &workspace::NewWindow, cx| {
+        let app_state = workspace::AppState::global(cx);
+        workspace::open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| {
+                cx.activate(true);
+                TerminalView::deploy(workspace, &NewCenterTerminal::default(), window, cx)
+            },
+        )
+        .detach_and_log_err(cx);
+    });
 }
 
 pub struct BlockProperties {

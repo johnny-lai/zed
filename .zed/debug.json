@@ -5,7 +5,8 @@
     "build": {
       "label": "Build Zed",
       "command": "cargo",
-      "args": ["build"]
+      "args": ["build"],
+      "env": {"ZED_STATELESS": "1"}
     }
   },
   {

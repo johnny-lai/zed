@@ -645,7 +645,7 @@
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-ctrl-shift-w": "git::Worktree",
       "alt-shift-enter": "toast::RunAction",
-      "ctrl-~": "workspace::NewTerminal",
+      "ctrl-~": "workspace::NewCenterTerminal",
       "save": "workspace::Save",
       "ctrl-s": "workspace::Save",
       "ctrl-k s": "workspace::SaveWithoutFormat",
@@ -1300,6 +1300,8 @@
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
       "ctrl->": "agent::AddSelectionToThread",
+      "ctrl-+": "terminal::AddWorktree",
+      "ctrl-_": "terminal::RemoveWorktree",
     },
   },
   {

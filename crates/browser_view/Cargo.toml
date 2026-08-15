@@ -19,6 +19,7 @@ futures.workspace = true
 gpui.workspace = true
 log.workspace = true
 menu.workspace = true
+raw-window-handle = "0.6"
 settings.workspace = true
 ui.workspace = true
 urlencoding.workspace = true
@@ -27,3 +28,13 @@ workspace.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 wry.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cairo-rs = "0.18"
+gdk = "0.18"
+gdk-sys = "0.18"
+glib = "0.18"
+gtk = "0.18"
+image.workspace = true
+smallvec.workspace = true
+webkit2gtk = { version = "2.0", features = ["v2_40"] }

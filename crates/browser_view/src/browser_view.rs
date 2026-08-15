@@ -8,8 +8,15 @@ use gpui::{
     InspectorElementId, IntoElement, LayoutId, MouseDownEvent, ParentElement, Pixels, Render,
     SharedString, Style, Styled, Subscription, Task, Window, actions, div, relative, size,
 };
+#[cfg(target_os = "linux")]
+use gpui::{
+    KeyDownEvent, KeyUpEvent, MouseButton, MouseMoveEvent, MouseUpEvent, ScrollDelta,
+    ScrollWheelEvent,
+};
 use settings::{LinkOpenBehavior, RegisterSetting, Settings};
 use ui::{Tooltip, prelude::*};
+#[cfg(target_os = "linux")]
+use util::ResultExt as _;
 use workspace::{
     LayoutRole, Pane, Workspace,
     item::{Item, ItemEvent, TabContentParams},
@@ -82,7 +89,7 @@ pub fn open_url(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    if cfg!(not(target_os = "macos")) {
+    if !browser_pane_supported(window) {
         cx.open_url(url);
         return;
     }
@@ -111,6 +118,24 @@ pub fn open_url(
             pane.add_item(Box::new(browser), true, true, None, window, cx)
         });
     }
+}
+
+/// Whether this window can host an in-app browser pane: macOS always, Linux
+/// only under Wayland (the only Linux compositor `webview::build` currently
+/// supports embedding a webview under). Everywhere else, links are handed to
+/// the system browser instead.
+fn browser_pane_supported(window: &Window) -> bool {
+    if cfg!(target_os = "macos") {
+        return true;
+    }
+    if cfg!(target_os = "linux") {
+        use raw_window_handle::HasDisplayHandle as _;
+        return matches!(
+            window.display_handle().map(|handle| handle.as_raw()),
+            Ok(raw_window_handle::RawDisplayHandle::Wayland(_))
+        );
+    }
+    false
 }
 
 fn most_recent_browser(
@@ -162,10 +187,10 @@ mod webview {
 
     use anyhow::Context as _;
     use futures::channel::mpsc::UnboundedSender;
-    use gpui::{Bounds, Pixels, Window};
+    use gpui::{Bounds, Context as GpuiContext, Pixels, Window};
     use util::ResultExt as _;
 
-    use crate::WebViewEvent;
+    use crate::{BrowserView, WebViewEvent};
 
     #[derive(Clone)]
     pub struct NativeWebView(Rc<wry::WebView>);
@@ -173,6 +198,7 @@ mod webview {
     pub fn build(
         url: &str,
         window: &Window,
+        _cx: &mut GpuiContext<BrowserView>,
         events: UnboundedSender<WebViewEvent>,
     ) -> anyhow::Result<NativeWebView> {
         let webview = wry::WebViewBuilder::new()
@@ -259,12 +285,402 @@ mod webview {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+// Linux has no equivalent of macOS's native-view embedding: `wry`'s Linux
+// backend needs GTK, and GTK has no supported way to place a foreign toolkit's
+// widget inside a plain Wayland surface the way an `NSView` can be added as a
+// subview. Instead, the page is rendered off-screen (`GtkOffscreenWindow`,
+// GTK's own documented mechanism for rendering a widget subtree that was never
+// put on screen) and captured frames are painted through GPUI's ordinary
+// image/atlas pipeline like any other bitmap, with input events forwarded in
+// as synthetic GDK events -- the same shape `terminal_view` uses to forward
+// input into its embedded terminal rather than relying on the OS to deliver it
+// to a real child view. Validated end-to-end (rendering, click, and keyboard
+// forwarding) against a standalone spike under a real Wayland session before
+// writing this.
+#[cfg(target_os = "linux")]
+mod webview {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::{Arc, Once};
+    use std::time::Duration;
+
+    use futures::channel::mpsc::UnboundedSender;
+    use gdk::glib::translate::*;
+    use gpui::{Bounds, Context as GpuiContext, Pixels, RenderImage, Window};
+    use gtk::prelude::*;
+    use image::{Frame, RgbaImage};
+    use webkit2gtk::{URIRequestExt as _, WebViewExt as _};
+
+    use crate::{BrowserView, WebViewEvent};
+
+    struct Inner {
+        offscreen: gtk::OffscreenWindow,
+        web_view: webkit2gtk::WebView,
+        latest_frame: RefCell<Option<Arc<RenderImage>>>,
+    }
+
+    #[derive(Clone)]
+    pub struct NativeWebView(Rc<Inner>);
+
+    /// Starts GTK once per process and keeps its main loop pumped for as long
+    /// as the process runs, since GPUI has no event loop of its own that GTK
+    /// can be integrated into. Runs as a plain poll loop rather than being
+    /// woken by GLib's own file descriptors -- simpler, at the cost of a
+    /// little latency/overhead while any browser pane exists.
+    fn ensure_gtk_running(cx: &mut GpuiContext<BrowserView>) {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            // WebKitGTK aborts trying to create a GL context when hosted in a
+            // GtkOffscreenWindow, since there is no on-screen compositor
+            // surface for it to accelerate against; its non-composited path
+            // avoids that (confirmed against a real Wayland session).
+            // SAFETY: called once, at the very first browser pane creation,
+            // before any other code in this process would plausibly read
+            // this variable.
+            unsafe {
+                std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+            }
+            gtk::init().expect("failed to initialize GTK for the browser pane");
+
+            cx.spawn(async move |_this, cx| {
+                loop {
+                    while gtk::events_pending() {
+                        gtk::main_iteration_do(false);
+                    }
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                }
+            })
+            .detach();
+        });
+    }
+
+    /// Copies a captured frame out of a cairo surface into a `RenderImage`.
+    ///
+    /// Cairo's `ARGB32` format is premultiplied alpha stored as B, G, R, A
+    /// bytes in memory on little-endian platforms -- already the byte order
+    /// `RenderImage` expects, but it wants straight (unpremultiplied) alpha.
+    fn capture_frame(source: cairo::ImageSurface) -> Option<RenderImage> {
+        let width = source.width();
+        let height = source.height();
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        // `source` is the offscreen window's own surface, which GTK also
+        // holds a reference to -- `ImageSurface::data()` refuses to hand out
+        // a mutable borrow while the cairo-level refcount is above 1. Paint
+        // it onto a fresh surface we exclusively own instead of trying to
+        // read `source` directly.
+        let mut copy = cairo::ImageSurface::create(cairo::Format::ARgb32, width, height).ok()?;
+        {
+            let context = cairo::Context::new(&copy).ok()?;
+            context.set_source_surface(&source, 0.0, 0.0).ok()?;
+            context.paint().ok()?;
+        }
+
+        let stride = copy.stride() as usize;
+        let row_bytes = width as usize * 4;
+
+        let mut packed = vec![0u8; row_bytes * height as usize];
+        {
+            let data = copy.data().ok()?;
+            for row in 0..height as usize {
+                let src = &data[row * stride..row * stride + row_bytes];
+                let dst = &mut packed[row * row_bytes..(row + 1) * row_bytes];
+                dst.copy_from_slice(src);
+            }
+        }
+
+        for pixel in packed.chunks_exact_mut(4) {
+            let alpha = pixel[3];
+            if alpha > 0 && alpha < 255 {
+                let alpha = alpha as f32 / 255.0;
+                pixel[0] = (pixel[0] as f32 / alpha).min(255.0) as u8;
+                pixel[1] = (pixel[1] as f32 / alpha).min(255.0) as u8;
+                pixel[2] = (pixel[2] as f32 / alpha).min(255.0) as u8;
+            }
+        }
+
+        let buffer = RgbaImage::from_raw(width as u32, height as u32, packed)?;
+        Some(RenderImage::new(smallvec::smallvec![Frame::new(buffer)]))
+    }
+
+    pub fn build(
+        url: &str,
+        _window: &Window,
+        cx: &mut GpuiContext<BrowserView>,
+        events: UnboundedSender<WebViewEvent>,
+    ) -> anyhow::Result<NativeWebView> {
+        ensure_gtk_running(cx);
+
+        let offscreen = gtk::OffscreenWindow::new();
+        let fixed = gtk::Fixed::new();
+        offscreen.add(&fixed);
+
+        let web_view = webkit2gtk::WebView::new();
+        fixed.put(&web_view, 0, 0);
+        offscreen.set_default_size(1, 1);
+        offscreen.show_all();
+
+        web_view.load_uri(url);
+
+        {
+            let events = events.clone();
+            web_view.connect_title_notify(move |web_view| {
+                let title = web_view.title().map(|title| title.to_string());
+                events
+                    .unbounded_send(WebViewEvent::TitleChanged(title.unwrap_or_default()))
+                    .ok();
+            });
+        }
+        {
+            let events = events.clone();
+            web_view.connect_uri_notify(move |web_view| {
+                if let Some(uri) = web_view.uri() {
+                    events
+                        .unbounded_send(WebViewEvent::UrlChanged(uri.to_string()))
+                        .ok();
+                }
+            });
+        }
+        {
+            // A page requested a new window (e.g. `target="_blank"`); mirrors
+            // the macOS `with_new_window_req_handler` behavior of opening it
+            // in the same webview rather than a real new window.
+            web_view.connect_create(move |_web_view, navigation_action| {
+                if let Some(uri) = navigation_action.request().and_then(|request| request.uri()) {
+                    events
+                        .unbounded_send(WebViewEvent::OpenUrlInPage(uri.to_string()))
+                        .ok();
+                }
+                None
+            });
+        }
+
+        let inner = Rc::new(Inner {
+            offscreen: offscreen.clone(),
+            web_view,
+            latest_frame: RefCell::new(None),
+        });
+
+        {
+            let inner = inner.clone();
+            offscreen.connect_damage_event(move |window, _event| {
+                if let Some(surface) = window.surface() {
+                    if let Ok(image_surface) = cairo::ImageSurface::try_from(surface) {
+                        match capture_frame(image_surface) {
+                            Some(frame) => {
+                                inner.latest_frame.replace(Some(Arc::new(frame)));
+                            }
+                            None => log::debug!("browser_view: failed to capture a webview frame"),
+                        }
+                    }
+                }
+                false
+            });
+        }
+
+        Ok(NativeWebView(inner))
+    }
+
+    impl NativeWebView {
+        pub fn set_bounds(&self, bounds: Bounds<Pixels>) {
+            let width = f32::from(bounds.size.width).round().max(1.0) as i32;
+            let height = f32::from(bounds.size.height).round().max(1.0) as i32;
+            self.0.web_view.set_size_request(width, height);
+            self.0.offscreen.resize(width, height);
+        }
+
+        pub fn set_visible(&self, visible: bool) {
+            // There is no native on-screen surface to hide -- offscreen
+            // rendering keeps happening either way -- but hiding the widget
+            // itself suppresses unnecessary internal repaint/compositing work
+            // for a backgrounded tab while keeping the last captured frame
+            // around for an instant reappearance when it's shown again.
+            self.0.web_view.set_visible(visible);
+        }
+
+        pub fn load_url(&self, url: &str) {
+            self.0.web_view.load_uri(url);
+        }
+
+        pub fn back(&self) {
+            self.0.web_view.go_back();
+        }
+
+        pub fn forward(&self) {
+            self.0.web_view.go_forward();
+        }
+
+        pub fn reload(&self) {
+            self.0.web_view.reload();
+        }
+
+        pub fn focus(&self) {
+            self.0.web_view.grab_focus();
+        }
+
+        pub fn latest_frame(&self) -> Option<Arc<RenderImage>> {
+            self.0.latest_frame.borrow().clone()
+        }
+
+        fn pointer_device() -> Option<gdk::Device> {
+            gdk::Display::default()?.default_seat()?.pointer()
+        }
+
+        fn keyboard_device() -> Option<gdk::Device> {
+            gdk::Display::default()?.default_seat()?.keyboard()
+        }
+
+        pub fn dispatch_pointer_button(
+            &self,
+            event_type: gdk::EventType,
+            position: gpui::Point<Pixels>,
+            button: u32,
+        ) {
+            let Some(window) = self.0.web_view.window() else {
+                return;
+            };
+            let mut event = gdk::Event::new(event_type);
+            // SAFETY: `event` was just created as this exact variant, so
+            // reinterpreting its raw pointer as `GdkEventButton` is valid; the
+            // fields written below are exactly those C's `GdkEventButton`
+            // declares, and `window` is given its own owned reference via
+            // `to_glib_full` to match what freeing the event will release.
+            unsafe {
+                let raw: *mut gdk_sys::GdkEvent = event.to_glib_none_mut().0;
+                let button_event = raw as *mut gdk_sys::GdkEventButton;
+                (*button_event).window = window.to_glib_full();
+                (*button_event).send_event = 1;
+                (*button_event).time = gdk_sys::GDK_CURRENT_TIME as u32;
+                (*button_event).x = f64::from(position.x);
+                (*button_event).y = f64::from(position.y);
+                (*button_event).axes = std::ptr::null_mut();
+                (*button_event).state = 0;
+                (*button_event).button = button;
+                (*button_event).x_root = f64::from(position.x);
+                (*button_event).y_root = f64::from(position.y);
+            }
+            event.set_device(Self::pointer_device().as_ref());
+            gtk::main_do_event(&mut event);
+        }
+
+        pub fn dispatch_pointer_motion(&self, position: gpui::Point<Pixels>) {
+            let Some(window) = self.0.web_view.window() else {
+                return;
+            };
+            let mut event = gdk::Event::new(gdk::EventType::MotionNotify);
+            // SAFETY: see `dispatch_pointer_button`; layout matches `GdkEventMotion`.
+            unsafe {
+                let raw: *mut gdk_sys::GdkEvent = event.to_glib_none_mut().0;
+                let motion_event = raw as *mut gdk_sys::GdkEventMotion;
+                (*motion_event).window = window.to_glib_full();
+                (*motion_event).send_event = 1;
+                (*motion_event).time = gdk_sys::GDK_CURRENT_TIME as u32;
+                (*motion_event).x = f64::from(position.x);
+                (*motion_event).y = f64::from(position.y);
+                (*motion_event).axes = std::ptr::null_mut();
+                (*motion_event).state = 0;
+                (*motion_event).is_hint = 0;
+                (*motion_event).x_root = f64::from(position.x);
+                (*motion_event).y_root = f64::from(position.y);
+            }
+            event.set_device(Self::pointer_device().as_ref());
+            gtk::main_do_event(&mut event);
+        }
+
+        pub fn dispatch_scroll(&self, position: gpui::Point<Pixels>, delta_x: f64, delta_y: f64) {
+            let Some(window) = self.0.web_view.window() else {
+                return;
+            };
+            let mut event = gdk::Event::new(gdk::EventType::Scroll);
+            // SAFETY: see `dispatch_pointer_button`; layout matches `GdkEventScroll`.
+            unsafe {
+                let raw: *mut gdk_sys::GdkEvent = event.to_glib_none_mut().0;
+                let scroll_event = raw as *mut gdk_sys::GdkEventScroll;
+                (*scroll_event).window = window.to_glib_full();
+                (*scroll_event).send_event = 1;
+                (*scroll_event).time = gdk_sys::GDK_CURRENT_TIME as u32;
+                (*scroll_event).x = f64::from(position.x);
+                (*scroll_event).y = f64::from(position.y);
+                (*scroll_event).state = 0;
+                (*scroll_event).direction = gdk_sys::GDK_SCROLL_SMOOTH;
+                (*scroll_event).x_root = f64::from(position.x);
+                (*scroll_event).y_root = f64::from(position.y);
+                (*scroll_event).delta_x = delta_x;
+                (*scroll_event).delta_y = delta_y;
+                (*scroll_event).is_stop = 0;
+            }
+            event.set_device(Self::pointer_device().as_ref());
+            gtk::main_do_event(&mut event);
+        }
+
+        pub fn dispatch_key(&self, event_type: gdk::EventType, keyval: u32) {
+            let Some(window) = self.0.web_view.window() else {
+                return;
+            };
+            let mut event = gdk::Event::new(event_type);
+            // SAFETY: see `dispatch_pointer_button`; layout matches `GdkEventKey`.
+            unsafe {
+                let raw: *mut gdk_sys::GdkEvent = event.to_glib_none_mut().0;
+                let key_event = raw as *mut gdk_sys::GdkEventKey;
+                (*key_event).window = window.to_glib_full();
+                (*key_event).send_event = 1;
+                (*key_event).time = gdk_sys::GDK_CURRENT_TIME as u32;
+                (*key_event).state = 0;
+                (*key_event).keyval = keyval;
+                (*key_event).length = 0;
+                (*key_event).string = std::ptr::null_mut();
+                (*key_event).hardware_keycode = 0;
+                (*key_event).group = 0;
+                (*key_event).is_modifier = 0;
+            }
+            event.set_device(Self::keyboard_device().as_ref());
+            gtk::main_do_event(&mut event);
+        }
+    }
+
+    /// Maps a GPUI key name (`Keystroke::key`, e.g. `"a"`, `"enter"`,
+    /// `"backspace"`) to a GDK keyval, for forwarding raw keystrokes into the
+    /// offscreen webview. There is no IME/text-composition bridging here --
+    /// this covers plain keys well enough for address bars and simple page
+    /// forms, not complex-script input.
+    pub fn keyval_for_key(key: &str) -> Option<u32> {
+        let name = match key {
+            "enter" => "Return",
+            "backspace" => "BackSpace",
+            "delete" => "Delete",
+            "tab" => "Tab",
+            "escape" => "Escape",
+            "space" => "space",
+            "up" => "Up",
+            "down" => "Down",
+            "left" => "Left",
+            "right" => "Right",
+            "home" => "Home",
+            "end" => "End",
+            "pageup" => "Page_Up",
+            "pagedown" => "Page_Down",
+            _ => {
+                let mut chars = key.chars();
+                let (Some(char), None) = (chars.next(), chars.next()) else {
+                    return None;
+                };
+                return Some(*gdk::keys::Key::from_unicode(char));
+            }
+        };
+        Some(*gdk::keys::Key::from_name(name))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod webview {
     use futures::channel::mpsc::UnboundedSender;
-    use gpui::{Bounds, Pixels, Window};
+    use gpui::{Bounds, Context as GpuiContext, Pixels, Window};
 
-    use crate::WebViewEvent;
+    use crate::{BrowserView, WebViewEvent};
 
     #[derive(Clone)]
     pub struct NativeWebView;
@@ -272,9 +688,10 @@ mod webview {
     pub fn build(
         _url: &str,
         _window: &Window,
+        _cx: &mut GpuiContext<BrowserView>,
         _events: UnboundedSender<WebViewEvent>,
     ) -> anyhow::Result<NativeWebView> {
-        anyhow::bail!("the browser pane is only supported on macOS")
+        anyhow::bail!("the browser pane is only supported on macOS and Linux/Wayland")
     }
 
     impl NativeWebView {
@@ -302,6 +719,12 @@ pub struct BrowserView {
     error: Option<SharedString>,
     _event_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    /// The atlas-backed image most recently painted for this browser's captured
+    /// webview frame, kept so the previous frame's atlas tile can be freed once
+    /// a newer one is painted in its place. Unused on macOS, where the page is a
+    /// real native view rather than a captured frame.
+    #[cfg(target_os = "linux")]
+    last_painted_frame: Option<std::sync::Arc<gpui::RenderImage>>,
 }
 
 impl BrowserView {
@@ -319,7 +742,7 @@ impl BrowserView {
 
         let (events_tx, mut events_rx) = futures::channel::mpsc::unbounded();
         let mut error = None;
-        let webview = match webview::build(&url, window, events_tx) {
+        let webview = match webview::build(&url, window, cx, events_tx) {
             Ok(webview) => Some(webview),
             Err(build_error) => {
                 log::error!("failed to create webview: {build_error:#}");
@@ -369,6 +792,8 @@ impl BrowserView {
             error,
             _event_task: event_task,
             _subscriptions: subscriptions,
+            #[cfg(target_os = "linux")]
+            last_painted_frame: None,
         }
     }
 
@@ -638,6 +1063,7 @@ impl Element for WebViewElement {
         )
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -653,6 +1079,7 @@ impl Element for WebViewElement {
         Some(window.insert_hitbox(bounds, HitboxBehavior::NativeView))
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -679,5 +1106,166 @@ impl Element for WebViewElement {
                 window.reclaim_native_focus();
             }
         });
+    }
+
+    // Linux has no native view to embed behind the rendering surface, so the
+    // captured webview frame is painted as an ordinary bitmap and input is
+    // forwarded in manually, rather than relying on `paint_cutout` +
+    // OS-delivered input the way the native-embedding platforms above do.
+    #[cfg(target_os = "linux")]
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let webview = self.browser.read(cx).webview.clone()?;
+        webview.set_bounds(bounds);
+        webview.set_visible(true);
+        Some(window.insert_hitbox(bounds, HitboxBehavior::Normal))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        hitbox: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(hitbox) = hitbox.clone() else {
+            return;
+        };
+
+        let webview = self.browser.read(cx).webview.clone();
+        let frame = webview.as_ref().and_then(|webview| webview.latest_frame());
+
+        if let Some(frame) = frame {
+            if window
+                .paint_image(bounds, Corners::default(), frame.clone(), 0, false)
+                .log_err()
+                .is_some()
+            {
+                let previous = self
+                    .browser
+                    .update(cx, |browser, _cx| browser.last_painted_frame.replace(frame.clone()));
+                if let Some(previous) = previous {
+                    if previous.id != frame.id {
+                        window.drop_image(previous).log_err();
+                    }
+                }
+            }
+        }
+
+        let focus_handle = self.browser.read(cx).focus_handle.clone();
+
+        let Some(webview) = webview else {
+            return;
+        };
+
+        window.on_mouse_event({
+            let webview = webview.clone();
+            let hitbox = hitbox.clone();
+            let focus_handle = focus_handle.clone();
+            move |event: &MouseDownEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                    return;
+                }
+                // Clicking the page is the only way to give this pane GPUI
+                // keyboard focus -- there is no real native view for the OS
+                // to hand focus to the way there is on macOS.
+                window.focus(&focus_handle, cx);
+                if let Some(button) = gdk_button_for(event.button) {
+                    webview.dispatch_pointer_button(
+                        gdk::EventType::ButtonPress,
+                        event.position - bounds.origin,
+                        button,
+                    );
+                }
+            }
+        });
+        window.on_mouse_event({
+            let webview = webview.clone();
+            let hitbox = hitbox.clone();
+            move |event: &MouseUpEvent, phase, window, _cx| {
+                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                    return;
+                }
+                if let Some(button) = gdk_button_for(event.button) {
+                    webview.dispatch_pointer_button(
+                        gdk::EventType::ButtonRelease,
+                        event.position - bounds.origin,
+                        button,
+                    );
+                }
+            }
+        });
+        window.on_mouse_event({
+            let webview = webview.clone();
+            let hitbox = hitbox.clone();
+            move |event: &MouseMoveEvent, phase, window, _cx| {
+                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                    return;
+                }
+                webview.dispatch_pointer_motion(event.position - bounds.origin);
+            }
+        });
+        window.on_mouse_event({
+            let webview = webview.clone();
+            move |event: &ScrollWheelEvent, phase, window, _cx| {
+                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                    return;
+                }
+                let (delta_x, delta_y) = match event.delta {
+                    ScrollDelta::Lines(delta) => (delta.x as f64, delta.y as f64),
+                    // GDK's smooth-scroll deltas are roughly in "lines", not
+                    // pixels; approximate using a typical line height.
+                    ScrollDelta::Pixels(delta) => {
+                        (f64::from(delta.x) / 20.0, f64::from(delta.y) / 20.0)
+                    }
+                };
+                webview.dispatch_scroll(event.position - bounds.origin, -delta_x, -delta_y);
+            }
+        });
+        window.on_key_event({
+            let webview = webview.clone();
+            let focus_handle = focus_handle.clone();
+            move |event: &KeyDownEvent, phase, window, _cx| {
+                if phase != DispatchPhase::Bubble || !focus_handle.is_focused(window) {
+                    return;
+                }
+                let key = event.keystroke.key_char.as_deref().unwrap_or(&event.keystroke.key);
+                if let Some(keyval) = webview::keyval_for_key(key) {
+                    webview.dispatch_key(gdk::EventType::KeyPress, keyval);
+                }
+            }
+        });
+        window.on_key_event({
+            move |event: &KeyUpEvent, phase, window, _cx| {
+                if phase != DispatchPhase::Bubble || !focus_handle.is_focused(window) {
+                    return;
+                }
+                let key = event.keystroke.key_char.as_deref().unwrap_or(&event.keystroke.key);
+                if let Some(keyval) = webview::keyval_for_key(key) {
+                    webview.dispatch_key(gdk::EventType::KeyRelease, keyval);
+                }
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn gdk_button_for(button: MouseButton) -> Option<u32> {
+    match button {
+        MouseButton::Left => Some(1),
+        MouseButton::Middle => Some(2),
+        MouseButton::Right => Some(3),
+        MouseButton::Navigate(_) => None,
     }
 }

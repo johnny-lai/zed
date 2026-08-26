@@ -1614,40 +1614,32 @@ impl FileFinderDelegate {
         let focus_item = dismiss_after_open;
 
         let open_task = workspace.update(cx, |workspace, cx| {
-            let split_or_open = |workspace: &mut Workspace,
+            let role = match secondary {
+                true => workspace::LayoutRole::AltEditor,
+                false => workspace::LayoutRole::Editor,
+            };
+
+            let open_in_role = |workspace: &mut Workspace,
                                  project_path,
+                                 allow_preview: bool,
                                  window: &mut Window,
                                  cx: &mut Context<Workspace>| {
-                if secondary {
-                    workspace.split_path_preview(project_path, allow_preview, None, window, cx)
-                } else {
-                    workspace.open_path_preview(
-                        project_path,
-                        None,
-                        focus_item,
-                        allow_preview,
-                        true,
-                        window,
-                        cx,
-                    )
-                }
+                let pane = Some(workspace.pane_for_layout_role(role, window, cx).downgrade());
+
+                workspace.open_path_preview(
+                    project_path,
+                    pane,
+                    focus_item,
+                    allow_preview,
+                    true,
+                    window,
+                    cx,
+                )
             };
 
             match &m {
                 Match::CreateNew(project_path) => {
-                    if secondary {
-                        workspace.split_path_preview(project_path.clone(), false, None, window, cx)
-                    } else {
-                        workspace.open_path_preview(
-                            project_path.clone(),
-                            None,
-                            focus_item,
-                            false,
-                            true,
-                            window,
-                            cx,
-                        )
-                    }
+                    open_in_role(workspace, project_path.clone(), false, window, cx)
                 }
                 Match::History { path, .. } => {
                     let worktree_id = path.project.worktree_id;
@@ -1657,24 +1649,25 @@ impl FileFinderDelegate {
                         .worktree_for_id(worktree_id, cx)
                         .is_some()
                     {
-                        split_or_open(
+                        open_in_role(
                             workspace,
                             ProjectPath {
                                 worktree_id,
                                 path: Arc::clone(&path.project.path),
                             },
+                            allow_preview,
                             window,
                             cx,
                         )
-                    } else if secondary {
-                        workspace.split_abs_path(path.absolute.clone(), false, window, cx)
                     } else {
-                        workspace.open_abs_path(
+                        let pane = Some(workspace.pane_for_layout_role(role, window, cx).downgrade());
+                        workspace.open_abs_path_in_pane(
                             path.absolute.clone(),
                             OpenOptions {
                                 visible: Some(OpenVisible::None),
                                 ..Default::default()
                             },
+                            pane,
                             window,
                             cx,
                         )
@@ -1683,7 +1676,7 @@ impl FileFinderDelegate {
                 Match::Search(path_match) => {
                     let project_path =
                         project_path_for_search_match(workspace.project(), &path_match.0, cx);
-                    split_or_open(workspace, project_path, window, cx)
+                    open_in_role(workspace, project_path, allow_preview, window, cx)
                 }
                 Match::Channel { .. } => unreachable!("handled above"),
             }

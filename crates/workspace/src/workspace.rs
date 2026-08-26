@@ -76,13 +76,13 @@ pub use item::{
 };
 use itertools::Itertools;
 use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
+pub use layout::*;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
 };
-pub use layout::*;
 pub use pane::*;
 pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
@@ -4810,10 +4810,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        self.open_abs_path_in_pane(abs_path, options, None, window, cx)
+    }
+
+    pub fn open_abs_path_in_pane(
+        &mut self,
+        abs_path: PathBuf,
+        options: OpenOptions,
+        pane: Option<WeakEntity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         cx.spawn_in(window, async move |workspace, cx| {
             let open_paths_task_result = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.open_paths(vec![abs_path.clone()], options, None, window, cx)
+                    workspace.open_paths(vec![abs_path.clone()], options, pane, window, cx)
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -6218,8 +6229,8 @@ impl Workspace {
         let pane = match self.layout {
             Layout::TwoColumn => {
                 let column = match role {
-                    LayoutRole::Terminal => 0,
-                    LayoutRole::AltTerminal | LayoutRole::Editor | LayoutRole::AltEditor => 1,
+                    LayoutRole::Terminal | LayoutRole::AltEditor => 0,
+                    LayoutRole::AltTerminal | LayoutRole::Editor => 1,
                 };
                 self.center.panes().get(column).map(|pane| (*pane).clone())
             }

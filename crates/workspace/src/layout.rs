@@ -19,6 +19,7 @@ impl std::fmt::Display for Layout {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum LayoutRole {
     Terminal,
     AltTerminal,

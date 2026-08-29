@@ -1148,7 +1148,7 @@ impl Element for WebViewElement {
 
         if let Some(frame) = frame {
             if window
-                .paint_image(bounds, Corners::default(), frame.clone(), 0, false)
+                .paint_image(bounds, bounds, Corners::default(), frame.clone(), 0, false)
                 .log_err()
                 .is_some()
             {

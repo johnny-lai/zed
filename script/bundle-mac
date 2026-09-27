@@ -105,6 +105,11 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
+# Add shell-integration
+mkdir "${app_path}/Contents/MacOS/shell-integration"
+ln -s "../cli" "${app_path}/Contents/MacOS/shell-integration/open"
+echo "Created shell-integration for ${app_path}"
+
 # DocumentTypes.plist references CFBundleTypeIconFile "Document", so the bundle must contain Document.icns.
 # We use the app icon as a placeholder document icon for now.
 document_icon_source="crates/zed/resources/Document.icns"

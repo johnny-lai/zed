@@ -677,23 +677,26 @@ pub fn insert_zed_terminal_env(
 /// consulted, so it isn't affected by macOS's `path_helper` reordering
 /// `PATH` ahead of a shim directory during login-shell startup.
 #[cfg(target_os = "macos")]
-const OPEN_URL_SHELL_FUNCTION: &str = "\
-open() {\n\
-  if [ \"$#\" -gt 0 ]; then\n\
-    local _zed_open_only_urls=1 _zed_open_arg\n\
-    for _zed_open_arg in \"$@\"; do\n\
-      case \"$_zed_open_arg\" in\n\
-        http://*|https://*) ;;\n\
-        *) _zed_open_only_urls=0 ;;\n\
-      esac\n\
-    done\n\
-    if [ \"$_zed_open_only_urls\" = 1 ] && command -v zetty >/dev/null 2>&1; then\n\
-      command zetty \"$@\"\n\
-      return\n\
-    fi\n\
-  fi\n\
-  command open \"$@\"\n\
-}\n";
+fn zsh_prepend_path(prepend_path: &PathBuf) -> String {
+    let prepend_path = prepend_path.display().to_string();
+    format!("\
+autoload -Uz add-zsh-hook\n\
+typeset -U PATH\n\
+_zetty_prepend_path() {{\n\
+    PATH=\"$1:$PATH\"\n\
+}}\n\
+_zetty_path_preexec() {{\n\
+    ZETTY_ORIGINAL_PATH=$PATH\n\
+    _zetty_prepend_path \"{prepend_path}\"\n\
+}}\n\
+_zetty_path_precmd() {{\n\
+    [[ -z \"$ZETTY_ORIGINAL_PATH\" ]] && return\n\
+    PATH=$ZETTY_ORIGINAL_PATH\n\
+    unset ZETTY_ORIGINAL_PATH\n\
+}}\n\
+add-zsh-hook preexec _zetty_path_preexec\n\
+add-zsh-hook precmd  _zetty_path_precmd\n")
+}
 
 /// Contents of the `.zshenv` placed at `<dir>/zsh/.zshenv`, loaded by
 /// pointing `ZDOTDIR` at that directory. Restores the caller's real
@@ -704,7 +707,8 @@ open() {\n\
 /// equivalent ZDOTDIR-chaining technique in Ghostty's zsh shell
 /// integration.
 #[cfg(target_os = "macos")]
-fn zsh_open_shim_zshenv_contents() -> String {
+fn zsh_open_shim_zshenv_contents(prepend_path: &PathBuf) -> String {
+    let zsh_injection = zsh_prepend_path(prepend_path);
     format!(
         "\
 if [[ -n \"${{ZED_OPEN_SHIM_ZDOTDIR+x}}\" ]]; then\n\
@@ -718,7 +722,7 @@ fi\n\
 [[ ! -r \"$_zed_open_shim_file\" ]] || 'builtin' 'source' '--' \"$_zed_open_shim_file\"\n\
 'builtin' 'unset' '_zed_open_shim_file'\n\
 \n\
-{OPEN_URL_SHELL_FUNCTION}"
+{zsh_injection}"
     )
 }
 
@@ -728,7 +732,7 @@ fi\n\
 /// `zsh` subdirectory containing it). Returns `None` if the file couldn't be
 /// written.
 #[cfg(target_os = "macos")]
-fn zsh_open_shim_zdotdir() -> Option<&'static Path> {
+fn zsh_open_shim_zdotdir(prepend_path: &PathBuf) -> Option<&'static Path> {
     static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let root = tempfile::Builder::new()
@@ -738,7 +742,7 @@ fn zsh_open_shim_zdotdir() -> Option<&'static Path> {
             .keep();
         let zdotdir = root.join("zsh");
         std::fs::create_dir_all(&zdotdir).log_err()?;
-        std::fs::write(zdotdir.join(".zshenv"), zsh_open_shim_zshenv_contents()).log_err()?;
+        std::fs::write(zdotdir.join(".zshenv"), zsh_open_shim_zshenv_contents(prepend_path)).log_err()?;
         Some(zdotdir)
     })
     .as_deref()
@@ -761,7 +765,7 @@ fn zsh_open_shim_zdotdir() -> Option<&'static Path> {
 /// cmux/Ghostty), and there's no fully reliable bash equivalent of zsh's
 /// `ZDOTDIR` chaining to avoid it.
 #[cfg(target_os = "macos")]
-fn apply_open_url_shell_function(env: &mut HashMap<String, String>, shell: &Shell) {
+fn apply_shell_integration(prepend_path: &PathBuf, env: &mut HashMap<String, String>, shell: &Shell) {
     let program = shell.program();
     let shell_name = Path::new(&program)
         .file_name()
@@ -769,7 +773,7 @@ fn apply_open_url_shell_function(env: &mut HashMap<String, String>, shell: &Shel
         .unwrap_or_default();
     match shell_name {
         "zsh" => {
-            let Some(zdotdir) = zsh_open_shim_zdotdir() else {
+            let Some(zdotdir) = zsh_open_shim_zdotdir(&prepend_path) else {
                 return;
             };
             if let Some(existing_zdotdir) = env.get("ZDOTDIR").filter(|value| !value.is_empty()) {
@@ -780,17 +784,12 @@ fn apply_open_url_shell_function(env: &mut HashMap<String, String>, shell: &Shel
             }
             env.insert("ZDOTDIR".to_string(), zdotdir.display().to_string());
         }
-        "bash" => {
-            let mut prompt_command = "unset PROMPT_COMMAND\n".to_string();
-            prompt_command.push_str(OPEN_URL_SHELL_FUNCTION);
-            env.insert("PROMPT_COMMAND".to_string(), prompt_command);
-        }
         _ => {}
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn apply_open_url_shell_function(_env: &mut HashMap<String, String>, _shell: &Shell) {}
+fn apply_open_url_shell_function(__cx: &App, env: &mut HashMap<String, String>, _shell: &Shell) {}
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1234,6 +1233,14 @@ impl TerminalBuilder {
             Ok(signal_mask) => Some(signal_mask),
             Err(error) => return Task::ready(Err(error)),
         };
+        let prepend_path = match cx.path_for_auxiliary_executable("cli") {
+            Ok(mut path) => {
+                path.pop();
+                path.push("shell-integration");
+                Some(path)
+            },
+            Err(_) => None,
+        };
         let fut = async move {
             let (task, completion_tx) = match mode.0 {
                 TerminalModeKind::Interactive => (None, None),
@@ -1262,7 +1269,9 @@ impl TerminalBuilder {
             insert_zed_terminal_env(&mut env, &version);
 
             if !is_remote_terminal {
-                apply_open_url_shell_function(&mut env, &shell);
+                if let Some(prepend_path) = prepend_path {
+                    apply_shell_integration(&prepend_path, &mut env, &shell);
+                }
             }
 
             #[derive(Default)]

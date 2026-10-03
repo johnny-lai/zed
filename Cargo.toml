@@ -149,6 +149,7 @@ members = [
     "crates/oauth_callback_server",
     "crates/ollama",
     "crates/onboarding",
+    "crates/open",
     "crates/open_ai",
     "crates/open_path_prompt",
     "crates/open_router",

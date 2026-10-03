@@ -108,9 +108,9 @@ rustup target add $target_triple
 echo "Compiling zed binaries"
 if [[ "$target_dir" = "release" ]]; then
     cargo --config .cargo/bundle-config.toml rustc ${build_flag} ${zed_features} --package zed --bin zetty --target $target_triple -- -C 'link-arg=-Wl,-unexported_symbol,__R*'
-    cargo --config .cargo/bundle-config.toml build ${build_flag} --package cli --target $target_triple
+    cargo --config .cargo/bundle-config.toml build ${build_flag} --package cli --package open@0.1.0 --target $target_triple
 else
-    cargo --config .cargo/bundle-config.toml build ${build_flag} ${zed_features} --package zed --package cli --target $target_triple
+    cargo --config .cargo/bundle-config.toml build ${build_flag} ${zed_features} --package zed --package cli --package open@0.1.0 --target $target_triple
 fi
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
@@ -129,11 +129,6 @@ app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace
 mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
-
-# Add shell-integration
-mkdir "${app_path}/Contents/MacOS/shell-integration"
-ln -s "../cli" "${app_path}/Contents/MacOS/shell-integration/open"
-echo "Created shell-integration for ${app_path}"
 
 # DocumentTypes.plist references CFBundleTypeIconFile "Document", so the bundle must contain Document.icns.
 # We use the app icon as a placeholder document icon for now.
@@ -232,6 +227,7 @@ function sign_app_binaries() {
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/shell-integration/open" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zetty" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
@@ -379,6 +375,8 @@ fi
 
 cp target/${target_triple}/${target_dir}/zetty "${app_path}/Contents/MacOS/zetty"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+mkdir -p "${app_path}/Contents/MacOS/shell-integration/"
+cp target/${target_triple}/${target_dir}/open "${app_path}/Contents/MacOS/shell-integration/open"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"

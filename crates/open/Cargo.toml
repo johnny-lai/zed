@@ -1,0 +1,13 @@
+[package]
+name = "open"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+file_content.workspace = true
+url.workspace = true

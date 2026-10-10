@@ -19088,6 +19088,7 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
+ "project_panel",
  "regex",
  "release_channel",
  "remote",

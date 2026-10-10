@@ -1118,7 +1118,7 @@ impl TerminalView {
         )
     }
 
-    pub fn add_worktree(&mut self, _: &AddWorktree, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add_worktree(&mut self, _: &AddWorktree, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.upgrade() else {
             return;
         };
@@ -1131,12 +1131,16 @@ impl TerminalView {
                 project.find_or_create_worktree(&path, true, cx)
             })
             .detach_and_log_err(cx);
+
+        let _ = self.workspace.update(cx, |workspace, cx| {
+           workspace.open_panel::<project_panel::ProjectPanel>(window, cx);
+        });
     }
 
     pub fn remove_worktree(
         &mut self,
         _: &RemoveWorktree,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(project) = self.project.upgrade() else {
@@ -1148,6 +1152,11 @@ impl TerminalView {
 
         project.update(cx, |project, cx| {
             project.remove_worktree_for_main_worktree_path(&path, cx);
+            if project.worktrees(cx).count() == 0 {
+                let _ = self.workspace.update(cx, |workspace, cx| {
+                   workspace.close_panel::<project_panel::ProjectPanel>(window, cx);
+                });
+            }
         });
     }
 }

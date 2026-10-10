@@ -630,6 +630,7 @@ pub enum Event {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
+        secondary: bool,
     },
     SplitEntry {
         entry_id: ProjectEntryId,
@@ -941,6 +942,7 @@ impl ProjectPanel {
                     entry_id,
                     focus_opened_item,
                     allow_preview,
+                    secondary,
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx)
                         && let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
@@ -958,6 +960,7 @@ impl ProjectPanel {
                                     None,
                                     focus_opened_item,
                                     allow_preview,
+                                    secondary,
                                     true,
                                     window, cx,
                                 )
@@ -2057,7 +2060,7 @@ impl ProjectPanel {
                 if split_direction.is_some() {
                     self.split_entry(entry.id, allow_preview, split_direction, cx);
                 } else {
-                    self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
+                    self.open_entry(entry.id, focus_opened_item, allow_preview, false, cx);
                 }
                 cx.notify();
             } else {
@@ -2296,7 +2299,7 @@ impl ProjectPanel {
                         if is_new_entry && !is_dir {
                             let settings = ProjectPanelSettings::get_global(cx);
                             if settings.auto_open.should_open_on_create() {
-                                project_panel.open_entry(new_entry.id, true, false, cx);
+                                project_panel.open_entry(new_entry.id, true, false, false, cx);
                             }
                         }
                         cx.notify();
@@ -2424,6 +2427,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
+        secondary: bool,
 
         cx: &mut Context<Self>,
     ) {
@@ -2431,6 +2435,7 @@ impl ProjectPanel {
             entry_id,
             focus_opened_item,
             allow_preview,
+            secondary,
         });
     }
 
@@ -3814,6 +3819,7 @@ impl ProjectPanel {
                                             entry.id,
                                             disambiguation_range.is_none(),
                                             false,
+                                            false,
                                             cx,
                                         );
                                     }
@@ -5122,7 +5128,7 @@ impl ProjectPanel {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         let settings = ProjectPanelSettings::get_global(cx);
                         if settings.auto_open.should_open_on_drop() {
-                            this.open_entry(opened_entries[0], true, false, cx);
+                            this.open_entry(opened_entries[0], true, false, false, cx);
                             did_open = true;
                         }
                     }
@@ -6566,7 +6572,7 @@ impl ProjectPanel {
                             if let Some(position) = project_panel
                                 .marked_entries
                                 .iter()
-                                .position(|e| *e == selection)
+                                .position(|entry| *entry == selection)
                             {
                                 project_panel.marked_entries.remove(position);
                             } else {
@@ -6610,7 +6616,7 @@ impl ProjectPanel {
                         let click_count = event.click_count();
                         let focus_opened_item = click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
-                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, event.modifiers().alt, cx);
                     }
                 }),
             )
@@ -6620,7 +6626,7 @@ impl ProjectPanel {
                         return;
                     }
 
-                    project_panel.open_entry(entry_id, true, false, cx);
+                    project_panel.open_entry(entry_id, true, false, event.modifiers().alt, cx);
                     cx.stop_propagation();
                 }),
             )

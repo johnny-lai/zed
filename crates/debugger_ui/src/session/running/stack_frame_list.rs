@@ -473,6 +473,7 @@ impl StackFrameList {
                             true,
                             true,
                             open_preview,
+                            false,
                             window,
                             cx,
                         ))

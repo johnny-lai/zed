@@ -2724,7 +2724,7 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(project_path, None, false, false, true, window, cx)
+                        .open_path_preview(project_path, None, false, false, false, true, window, cx)
                         .detach_and_notify_err(self.workspace.clone(), window, cx);
                 })
                 .log_err();

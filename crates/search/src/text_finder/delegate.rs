@@ -513,7 +513,7 @@ impl Delegate {
             return;
         };
         let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(path, pane, focus, false, true, window, cx)
+            workspace.open_path_preview(path, pane, focus, false, false, true, window, cx)
         });
         cx.spawn_in(window, async move |_, cx| {
             let item = open_task.await.log_err()?;

@@ -4872,7 +4872,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        self.open_path_preview(path, pane, focus_item, false, true, window, cx)
+        self.open_path_preview(path, pane, focus_item, false, false, true, window, cx)
     }
 
     pub fn open_path_preview(
@@ -4881,6 +4881,7 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
         allow_preview: bool,
+        secondary: bool,
         activate: bool,
         window: &mut Window,
         cx: &mut App,
@@ -4889,6 +4890,10 @@ impl Workspace {
         let workspace = self.weak_handle();
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
+        let layout_role = match secondary {
+            true => LayoutRole::AltEditor,
+            false =>  LayoutRole::Editor,
+        };
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
 
@@ -4896,7 +4901,7 @@ impl Workspace {
                 Some(pane) => pane,
                 None => workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.pane_for_layout_role(LayoutRole::Editor, window, cx)
+                        workspace.pane_for_layout_role(layout_role, window, cx)
                     })?
                     .downgrade(),
             };

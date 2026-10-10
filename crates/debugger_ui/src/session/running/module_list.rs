@@ -109,6 +109,7 @@ impl ModuleList {
                         false,
                         true,
                         true,
+                        false,
                         window,
                         cx,
                     ))

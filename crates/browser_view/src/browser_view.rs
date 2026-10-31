@@ -1100,10 +1100,16 @@ impl Element for WebViewElement {
         window.paint_cutout(bounds, Corners::default());
 
         let has_webview = self.browser.read(cx).webview.is_some();
-        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _cx| {
+        let focus_handle = self.browser.read(cx).focus_handle.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && has_webview && !bounds.contains(&event.position) {
                 // Clicking outside the page returns keyboard focus to GPUI.
                 window.reclaim_native_focus();
+            } else if phase == DispatchPhase::Bubble && has_webview && bounds.contains(&event.position) {
+                // Clicking inside the page gives GPUI keyboard focus so that
+                // actions like Cmd+W dispatch to the browser pane, not to the
+                // pane that was previously focused.
+                window.focus(&focus_handle, cx);
             }
         });
     }

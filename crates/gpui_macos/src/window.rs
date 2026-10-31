@@ -3698,15 +3698,10 @@ extern "C" fn hit_test(this: &AnyObject, _: Sel, point: NSPoint) -> *mut AnyObje
             return hit;
         }
 
-        // `point` is in the superview's coordinates, which share this view's
-        // origin and size, so this is the usual bottom-left to top-left flip.
-        let position = convert_mouse_position(point, lock.content_size().height);
-        let passthrough = lock
-            .native_view_passthrough
-            .iter()
-            .any(|region| region.contains(&position));
-
-        if passthrough { ptr::null_mut() } else { hit }
+        // On macOS, the native view must always receive mouse events so that
+        // GPUI focus can be synced. Returning null for passthrough regions
+        // prevents mouse events inside browser panes from reaching GPUI.
+        hit
     }
 }
 

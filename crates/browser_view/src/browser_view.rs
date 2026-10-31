@@ -1107,8 +1107,8 @@ impl Element for WebViewElement {
                 window.reclaim_native_focus();
             } else if phase == DispatchPhase::Bubble && has_webview && bounds.contains(&event.position) {
                 // Clicking inside the page gives GPUI keyboard focus so that
-                // actions like Cmd+W dispatch to the browser pane, not to the
-                // pane that was previously focused.
+                // actions like Cmd+W dispatch to the browser pane.
+                window.reclaim_native_focus();
                 window.focus(&focus_handle, cx);
             }
         });

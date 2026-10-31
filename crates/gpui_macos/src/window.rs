@@ -3324,15 +3324,12 @@ extern "C" fn hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
             return hit;
         }
 
-        // `point` is in the superview's coordinates, which share this view's
-        // origin and size, so this is the usual bottom-left to top-left flip.
-        let position = convert_mouse_position(point, lock.content_size().height);
-        let passthrough = lock
-            .native_view_passthrough
-            .iter()
-            .any(|region| region.contains(&position));
-
-        if passthrough { nil } else { hit }
+        // On macOS, the native view must always receive mouse events so that
+        // GPUI focus can be synced. Previously we returned `nil` for passthrough
+        // regions, but that prevented the native view from receiving mouse events
+        // inside browser panes, breaking focus sync when clicking inside the
+        // browser webview.
+        hit
     }
 }
 

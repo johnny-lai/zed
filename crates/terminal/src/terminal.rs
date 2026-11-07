@@ -726,26 +726,30 @@ fi\n\
     )
 }
 
-/// Lazily writes the zsh `open`-shim `.zshenv` (see
-/// [`zsh_open_shim_zshenv_contents`]) to a process-lifetime temp directory
-/// and returns the directory meant to be pointed at by `ZDOTDIR` (i.e. the
-/// `zsh` subdirectory containing it). Returns `None` if the file couldn't be
-/// written.
+/// Recreates the zsh shim if its temp directory was removed.
+/// Returns `None` if the shim cannot be written.
 #[cfg(target_os = "macos")]
-fn zsh_open_shim_zdotdir(prepend_path: &PathBuf) -> Option<&'static Path> {
-    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        let root = tempfile::Builder::new()
-            .prefix("zetty-open-shim-zsh")
-            .tempdir()
-            .log_err()?
-            .keep();
-        let zdotdir = root.join("zsh");
-        std::fs::create_dir_all(&zdotdir).log_err()?;
-        std::fs::write(zdotdir.join(".zshenv"), zsh_open_shim_zshenv_contents(prepend_path)).log_err()?;
-        Some(zdotdir)
-    })
-    .as_deref()
+fn zsh_open_shim_zdotdir(prepend_path: &PathBuf) -> Option<PathBuf> {
+    static ROOT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+    let mut root = ROOT.lock().log_err()?;
+    if root.as_ref().is_none_or(|path| !path.exists()) {
+        *root = Some(
+            tempfile::Builder::new()
+                .prefix("zetty-open-shim-zsh")
+                .tempdir()
+                .log_err()?
+                .keep(),
+        );
+    }
+
+    let zdotdir = root.as_ref()?.join("zsh");
+    std::fs::create_dir_all(&zdotdir).log_err()?;
+    std::fs::write(
+        zdotdir.join(".zshenv"),
+        zsh_open_shim_zshenv_contents(prepend_path),
+    )
+    .log_err()?;
+    Some(zdotdir)
 }
 
 /// Defines the `open` shell function (see [`OPEN_URL_SHELL_FUNCTION`])

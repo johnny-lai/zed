@@ -12,8 +12,8 @@ local_install=false
 can_code_sign=false
 
 # This must match the team in the provisioning profile.
-IDENTITY="Zed Industries, Inc."
-APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
+IDENTITY="Bing-Chang Lai"
+APPLE_NOTARIZATION_TEAM="A8698AS25F"
 
 # Function for displaying help info
 help_info() {
@@ -239,7 +239,6 @@ function sign_app_binaries() {
 
         # NOTE: if you need to test universal links you have a few paths forward:
         # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
-        # - get a signing key for the MQ55VZLNZQ team from Nathan.
         # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
         # then comment out this line.
         cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"

@@ -1,0 +1,51 @@
+name: release-zetty
+
+on:
+  push:
+    tags:
+    - v*
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: (github.repository_owner == 'johnny-lai')
+    runs-on: self-mini-macos
+    env:
+      CARGO_INCREMENTAL: '0'
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Add Rust target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build DMG
+        run: ./script/bundle-mac aarch64-apple-darwin
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zetty-aarch64.dmg
+          path: target/aarch64-apple-darwin/release/Zetty-aarch64.dmg
+          if-no-files-found: error
+
+      - name: Upload remote server
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-remote-server-macos-aarch64.gz
+          path: target/zed-remote-server-macos-aarch64.gz
+          if-no-files-found: error
